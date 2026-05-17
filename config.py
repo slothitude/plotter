@@ -43,13 +43,17 @@ def load_page_size() -> dict:
                 return json.load(f)
         except Exception:
             pass
-    return {"width": 220, "height": 220, "preset": "220mm"}
+    return {"width": 220, "height": 220, "preset": "220mm", "offset_x": 0, "offset_y": 0}
 
 
-def save_page_size(width: float, height: float, preset: str = "custom"):
+def save_page_size(width: float, height: float, preset: str = "custom",
+                   offset_x: float = 0, offset_y: float = 0):
     """Save page size to disk."""
     with open(PAGE_SIZE_FILE, "w") as f:
-        json.dump({"width": float(width), "height": float(height), "preset": preset}, f, indent=2)
+        json.dump({
+            "width": float(width), "height": float(height), "preset": preset,
+            "offset_x": float(offset_x), "offset_y": float(offset_y),
+        }, f, indent=2)
 
 
 # ── Data classes ────────────────────────────────────────────────────

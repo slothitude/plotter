@@ -244,6 +244,8 @@ def polylines_to_gcode(
     profile: config.ToolProfile,
     bed_x: float = config.PRINTER_BED_X,
     bed_y: float = config.PRINTER_BED_Y,
+    page_offset_x: float = 0.0,
+    page_offset_y: float = 0.0,
 ) -> str:
     """Convert polylines to G-code string."""
     if not polylines:
@@ -277,7 +279,8 @@ def polylines_to_gcode(
     offset_y = (bed_y - scaled_h) / 2 - min_y * scale
 
     def transform(px, py):
-        return round(px * scale + offset_x, 3), round(py * scale + offset_y, 3)
+        return (round(px * scale + offset_x + page_offset_x, 3),
+                round(py * scale + offset_y + page_offset_y, 3))
 
     lines = []
     lines.append("; Pen Plotter G-code")

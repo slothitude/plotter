@@ -12,6 +12,8 @@ const state = {
     pageWidth: 220,
     pageHeight: 220,
     pagePreset: '220mm',
+    pageOffsetX: 0,
+    pageOffsetY: 0,
     ws: null,
     statusInterval: null,
 };
@@ -315,6 +317,8 @@ function loadTestPattern(pattern, text) {
         size,
         page_width: state.pageWidth,
         page_height: state.pageHeight,
+        page_offset_x: state.pageOffsetX,
+        page_offset_y: state.pageOffsetY,
     };
     if (pattern === 'text') body.text = text || 'HELLO';
     api('/api/test-pattern', {
@@ -391,6 +395,8 @@ function convertSvg() {
             tool,
             page_width: state.pageWidth,
             page_height: state.pageHeight,
+            page_offset_x: state.pageOffsetX,
+            page_offset_y: state.pageOffsetY,
         }),
     })
         .then(r => r.json())
@@ -572,15 +578,21 @@ function initPageSize() {
     const presetSel = document.getElementById('page-preset');
     const widthInput = document.getElementById('page-width');
     const heightInput = document.getElementById('page-height');
+    const offsetXInput = document.getElementById('page-offset-x');
+    const offsetYInput = document.getElementById('page-offset-y');
 
     // Load saved page size
     api('/api/page-size').then(r => r.json()).then(data => {
         state.pageWidth = data.width;
         state.pageHeight = data.height;
         state.pagePreset = data.preset || '220mm';
+        state.pageOffsetX = data.offset_x || 0;
+        state.pageOffsetY = data.offset_y || 0;
         presetSel.value = state.pagePreset;
         widthInput.value = state.pageWidth;
         heightInput.value = state.pageHeight;
+        offsetXInput.value = state.pageOffsetX;
+        offsetYInput.value = state.pageOffsetY;
         widthInput.disabled = state.pagePreset !== 'Custom';
         heightInput.disabled = state.pagePreset !== 'Custom';
         drawEmptyCanvas();
@@ -595,11 +607,11 @@ function initPageSize() {
             heightInput.value = h;
             widthInput.disabled = true;
             heightInput.disabled = true;
-            savePageSize(w, h, preset);
+            savePageSize();
         } else {
             widthInput.disabled = false;
             heightInput.disabled = false;
-            savePageSize(parseFloat(widthInput.value), parseFloat(heightInput.value), 'Custom');
+            savePageSize();
         }
     });
 
@@ -608,23 +620,32 @@ function initPageSize() {
         presetSel.value = 'Custom';
         widthInput.disabled = false;
         heightInput.disabled = false;
-        const w = parseFloat(widthInput.value) || 220;
-        const h = parseFloat(heightInput.value) || 220;
-        savePageSize(w, h, 'Custom');
+        savePageSize();
     };
     widthInput.addEventListener('change', onDimChange);
     heightInput.addEventListener('change', onDimChange);
+
+    // Offset inputs
+    offsetXInput.addEventListener('change', savePageSize);
+    offsetYInput.addEventListener('change', savePageSize);
 }
 
-function savePageSize(w, h, preset) {
+function savePageSize() {
+    const w = parseFloat(document.getElementById('page-width').value) || 220;
+    const h = parseFloat(document.getElementById('page-height').value) || 220;
+    const preset = document.getElementById('page-preset').value;
+    const ox = parseFloat(document.getElementById('page-offset-x').value) || 0;
+    const oy = parseFloat(document.getElementById('page-offset-y').value) || 0;
     state.pageWidth = w;
     state.pageHeight = h;
     state.pagePreset = preset;
+    state.pageOffsetX = ox;
+    state.pageOffsetY = oy;
     drawEmptyCanvas();
     api('/api/page-size', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ width: w, height: h, preset }),
+        body: JSON.stringify({ width: w, height: h, preset, offset_x: ox, offset_y: oy }),
     });
 }
 

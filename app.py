@@ -144,12 +144,15 @@ def convert_svg():
 
     page_width = float(data.get("page_width", config.PRINTER_BED_X))
     page_height = float(data.get("page_height", config.PRINTER_BED_Y))
+    page_offset_x = float(data.get("page_offset_x", 0))
+    page_offset_y = float(data.get("page_offset_y", 0))
 
     try:
         gc, polylines = gcode.svg_to_gcode(uploaded_svgs[file_id], tool_name)
         # Regenerate G-code with page dimensions
         profile = config.load_profile(tool_name)
-        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height)
+        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height,
+                                      page_offset_x=page_offset_x, page_offset_y=page_offset_y)
         generated_gcode[file_id] = gc
 
         # Save G-code file
@@ -218,6 +221,8 @@ def test_pattern():
         text = data.get("text", "HELLO")
         page_width = float(data.get("page_width", config.PRINTER_BED_X))
         page_height = float(data.get("page_height", config.PRINTER_BED_Y))
+        page_offset_x = float(data.get("page_offset_x", 0))
+        page_offset_y = float(data.get("page_offset_y", 0))
         scale = 2.0
         spacing = 2.0
         # Calculate max_width: page width minus 20mm margin, converted to font units
@@ -230,7 +235,8 @@ def test_pattern():
         # Generate G-code directly from polylines
         tool = data.get("tool", "pencil")
         profile = config.load_profile(tool)
-        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height)
+        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height,
+                                      page_offset_x=page_offset_x, page_offset_y=page_offset_y)
         file_id = uuid.uuid4().hex[:8]
         generated_gcode[file_id] = gc
         gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
@@ -488,8 +494,11 @@ def set_page_size():
     width = float(data.get("width", 220))
     height = float(data.get("height", 220))
     preset = data.get("preset", "custom")
-    config.save_page_size(width, height, preset)
-    return jsonify({"ok": True, "width": width, "height": height, "preset": preset})
+    offset_x = float(data.get("offset_x", 0))
+    offset_y = float(data.get("offset_y", 0))
+    config.save_page_size(width, height, preset, offset_x, offset_y)
+    return jsonify({"ok": True, "width": width, "height": height, "preset": preset,
+                    "offset_x": offset_x, "offset_y": offset_y})
 
 
 # ── Main ─────────────────────────────────────────────────────────────
