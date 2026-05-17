@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plotter Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+    <div class="app-layout">
+
+        <!-- TOP BAR: Connection + Jog Controls -->
+        <header class="top-bar">
+            <div class="top-left">
+                <div class="logo-text">PLOTTER<span class="logo-accent">CTRL</span></div>
+            </div>
+            <div class="top-conn">
+                <select id="port-select" class="input-select">
+                    <option value="">-- Port --</option>
+                </select>
+                <button id="btn-connect" class="btn btn-connect">CONNECT</button>
+                <span id="conn-status" class="conn-badge disconnected">OFFLINE</span>
+            </div>
+            <div class="top-pos">
+                <span class="pos-label">X</span><span class="pos-val" id="pos-x">0.000</span>
+                <span class="pos-label">Y</span><span class="pos-val" id="pos-y">0.000</span>
+                <span class="pos-label">Z</span><span class="pos-val" id="pos-z">0.000</span>
+            </div>
+            <div class="top-jog">
+                <select id="jog-step" class="input-select jog-step-sel">
+                    <option value="1">1mm</option>
+                    <option value="10" selected>10mm</option>
+                    <option value="0.1">0.1mm</option>
+                    <option value="50">50mm</option>
+                </select>
+                <button class="btn btn-jog-sm" data-axis="Y" data-dir="1">Y+</button>
+                <button class="btn btn-jog-sm" data-axis="Y" data-dir="-1">Y-</button>
+                <button class="btn btn-jog-sm" data-axis="X" data-dir="-1">X-</button>
+                <button class="btn btn-jog-sm" data-axis="X" data-dir="1">X+</button>
+                <span class="jog-sep"></span>
+                <button class="btn btn-jog-sm" data-axis="Z" data-dir="-1">Z-</button>
+                <button class="btn btn-jog-sm" data-axis="Z" data-dir="1">Z+</button>
+            </div>
+            <button id="btn-home" class="btn btn-outline btn-sm">Home</button>
+            <button id="btn-estop" class="btn-estop-sm">E-STOP</button>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Tab Bar -->
+            <nav class="tab-bar">
+                <button class="tab active" data-tab="calibration">
+                    <span class="tab-icon">◎</span> Calibration
+                </button>
+                <button class="tab" data-tab="plot">
+                    <span class="tab-icon">◈</span> Plot
+                </button>
+                <button class="tab" data-tab="settings">
+                    <span class="tab-icon">⚙</span> Settings
+                </button>
+            </nav>
+
+            <!-- Tab: Calibration -->
+            <div class="tab-content active" id="tab-calibration">
+                <div class="cal-layout">
+                    <div class="cal-main">
+                        <section class="panel">
+                            <h3 class="panel-title">Tool Calibration</h3>
+                            <p class="cal-desc">Calibrate the pen-down Z height for each tool. The nozzle must just touch the paper.</p>
+
+                            <div class="cal-controls">
+                                <div class="cal-row">
+                                    <label>Active Tool</label>
+                                    <select id="cal-tool" class="input-select">
+                                        <option value="pencil">Pencil</option>
+                                        <option value="pen">Pen</option>
+                                        <option value="watercolor">Watercolor</option>
+                                    </select>
+                                </div>
+                                <div class="cal-actions">
+                                    <button id="btn-cal-start" class="btn btn-primary">Start Calibration</button>
+                                    <button id="btn-cal-test-dot" class="btn btn-outline">Test Dot</button>
+                                </div>
+                            </div>
+
+                            <div class="cal-z-section">
+                                <div class="cal-z-header">
+                                    <span>Current Z Height</span>
+                                    <span class="cal-z-value" id="cal-z-display">--</span>
+                                </div>
+                                <div class="cal-z-buttons">
+                                    <button class="btn btn-z-step" data-delta="-1">▼ 1mm</button>
+                                    <button class="btn btn-z-step" data-delta="-0.1">▼ 0.1mm</button>
+                                    <button class="btn btn-z-step fine" data-delta="-0.01">▼ 0.01mm</button>
+                                    <button class="btn btn-z-step fine" data-delta="0.01">▲ 0.01mm</button>
+                                    <button class="btn btn-z-step" data-delta="0.1">▲ 0.1mm</button>
+                                    <button class="btn btn-z-step" data-delta="1">▲ 1mm</button>
+                                </div>
+                                <button id="btn-cal-save" class="btn btn-primary btn-block">Save Current Z as Pen-Down Height</button>
+                                <div class="cal-offset-section">
+                                    <div class="cal-offset-header">Pen XY Offset</div>
+                                    <p class="cal-desc">Home the printer, then jog the pen to the corner of your paper. The pen's current X/Y position IS the offset.</p>
+                                    <div class="cal-offset-row">
+                                        <span class="cal-offset-val">X: <strong id="cal-ox">--</strong></span>
+                                        <span class="cal-offset-val">Y: <strong id="cal-oy">--</strong></span>
+                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Current XY as Offset</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="cal-saved">
+                        <section class="panel">
+                            <h3 class="panel-title">Saved Calibrations</h3>
+                            <div id="cal-saved-list" class="cal-saved-list">
+                                <div class="cal-saved-item">No calibrations saved yet.</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Plot -->
+            <div class="tab-content" id="tab-plot">
+                <div class="plot-layout">
+                    <div class="plot-left">
+                        <!-- Upload -->
+                        <section class="panel">
+                            <h3 class="panel-title">SVG Upload</h3>
+                            <div id="drop-zone" class="drop-zone">
+                                <div class="drop-zone-content">
+                                    <div class="drop-icon">⬆</div>
+                                    <div>Drop SVG here or click to browse</div>
+                                </div>
+                                <input type="file" id="svg-input" accept=".svg" hidden>
+                            </div>
+                            <div id="upload-info" class="upload-info hidden"></div>
+                        </section>
+
+                        <!-- Canvas Preview -->
+                        <section class="panel">
+                            <h3 class="panel-title">
+                                Preview
+                                <span class="panel-badge" id="preview-info"></span>
+                            </h3>
+                            <div class="canvas-container">
+                                <canvas id="preview-canvas" width="500" height="500"></canvas>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="plot-right">
+                        <!-- Page Size -->
+                        <section class="panel">
+                            <h3 class="panel-title">Page Size</h3>
+                            <div class="convert-row">
+                                <label>Preset</label>
+                                <select id="page-preset" class="input-select">
+                                    <option value="220mm">220 x 220 mm</option>
+                                    <option value="A4">A4 (210 x 297)</option>
+                                    <option value="A5">A5 (148 x 210)</option>
+                                    <option value="Letter">Letter (216 x 279)</option>
+                                    <option value="4x6">4" x 6" (102 x 152)</option>
+                                    <option value="5x7">5" x 7" (127 x 178)</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="convert-row page-dims">
+                                <input type="number" id="page-width" class="input-field" value="220" step="1"> x
+                                <input type="number" id="page-height" class="input-field" value="220" step="1"> mm
+                            </div>
+                        </section>
+
+                        <!-- Tool & Convert -->
+                        <section class="panel">
+                            <h3 class="panel-title">Convert</h3>
+                            <div class="convert-row">
+                                <label>Tool</label>
+                                <select id="plot-tool" class="input-select">
+                                    <option value="pencil">Pencil</option>
+                                    <option value="pen">Pen</option>
+                                    <option value="watercolor">Watercolor</option>
+                                </select>
+                            </div>
+                            <button id="btn-convert" class="btn btn-primary btn-block" disabled>Convert SVG → G-code</button>
+                            <div class="test-section">
+                                <div class="test-header">Test Patterns <span class="unit">size</span></div>
+                                <div class="test-size-row">
+                                    <input type="number" id="test-size" class="input-field" value="80" step="5" min="10" max="200">
+                                </div>
+                                <div class="test-buttons">
+                                    <button id="btn-test-circle" class="btn btn-outline btn-sm">Circle</button>
+                                    <button id="btn-test-square" class="btn btn-outline btn-sm">Square</button>
+                                    <button id="btn-test-text" class="btn btn-outline btn-sm">Text</button>
+                                    <button id="btn-test-grid" class="btn btn-outline btn-sm">Grid</button>
+                                    <button id="btn-test-star" class="btn btn-outline btn-sm">Star</button>
+                                </div>
+                                <div class="test-text-input hidden">
+                                    <input type="text" id="test-text-value" class="input-field" placeholder="Enter text..." value="HELLO">
+                                    <button id="btn-test-text-go" class="btn btn-primary btn-sm">Draw</button>
+                                </div>
+                            </div>
+                            <div id="convert-result" class="convert-result hidden"></div>
+                        </section>
+
+                        <!-- G-code Preview -->
+                        <section class="panel">
+                            <h3 class="panel-title">
+                                G-code
+                                <span class="panel-badge" id="gcode-lines"></span>
+                            </h3>
+                            <pre id="gcode-preview" class="gcode-preview">No G-code generated yet.</pre>
+                            <div class="gcode-actions">
+                                <button id="btn-download-gcode" class="btn btn-outline btn-sm" disabled>Download .gcode</button>
+                            </div>
+                        </section>
+
+                        <!-- Print -->
+                        <section class="panel">
+                            <h3 class="panel-title">Print</h3>
+                            <button id="btn-print" class="btn btn-primary btn-block" disabled>Start Plot</button>
+                            <div id="progress-container" class="progress-container hidden">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progress-fill"></div>
+                                </div>
+                                <div class="progress-text" id="progress-text">0%</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Settings -->
+            <div class="tab-content" id="tab-settings">
+                <div class="settings-layout">
+                    <div class="settings-tabs">
+                        <button class="settings-tab active" data-settings-tool="pencil">Pencil</button>
+                        <button class="settings-tab" data-settings-tool="pen">Pen</button>
+                        <button class="settings-tab" data-settings-tool="watercolor">Watercolor</button>
+                    </div>
+
+                    <div class="settings-panels">
+                        <section class="panel">
+                            <h3 class="panel-title">Movement</h3>
+                            <div class="settings-grid">
+                                <div class="setting-field">
+                                    <label>Draw Speed <span class="unit">mm/min</span></label>
+                                    <input type="number" id="set-draw-speed" class="input-field" step="100">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Travel Speed <span class="unit">mm/min</span></label>
+                                    <input type="number" id="set-travel-speed" class="input-field" step="100">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Lift Height <span class="unit">mm</span></label>
+                                    <input type="number" id="set-lift-height" class="input-field" step="0.5">
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="panel" id="water-settings">
+                            <h3 class="panel-title">Water / Brush</h3>
+                            <div class="settings-grid">
+                                <div class="setting-field full-width">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" id="set-water-enabled">
+                                        <span>Water dipping enabled</span>
+                                    </label>
+                                </div>
+                                <div class="setting-field">
+                                    <label>Cup X <span class="unit">mm</span></label>
+                                    <input type="number" id="set-cup-x" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Cup Y <span class="unit">mm</span></label>
+                                    <input type="number" id="set-cup-y" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Cup Height <span class="unit">mm</span></label>
+                                    <input type="number" id="set-cup-height" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Cup Diameter <span class="unit">mm</span></label>
+                                    <input type="number" id="set-cup-diameter" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Dip Depth <span class="unit">mm</span></label>
+                                    <input type="number" id="set-dip-depth" class="input-field" step="0.5">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Dip Time <span class="unit">ms</span></label>
+                                    <input type="number" id="set-dip-time" class="input-field" step="100">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Dip Interval <span class="unit">segments</span></label>
+                                    <input type="number" id="set-dip-interval" class="input-field" step="5">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Blot X <span class="unit">mm</span></label>
+                                    <input type="number" id="set-blot-x" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Blot Y <span class="unit">mm</span></label>
+                                    <input type="number" id="set-blot-y" class="input-field" step="1">
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="settings-actions">
+                            <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
+                            <span id="settings-saved-msg" class="settings-saved-msg hidden">Saved.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+output/
+page_size.json
+calibration.json

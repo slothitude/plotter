@@ -1,0 +1,6 @@
+flask
+flask-sock
+pyserial
+svgpathtools
+numpy
+toml

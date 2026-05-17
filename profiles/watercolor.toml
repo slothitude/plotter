@@ -1,0 +1,23 @@
+[tool]
+name = "Watercolor"
+
+[movement]
+draw_speed = 1000
+travel_speed = 2500
+lift_height = 5.0
+
+[height]
+pen_down_z = 0.0
+pen_up_z = 5.0
+
+[water]
+enabled = true
+cup_x = 200.0
+cup_y = 200.0
+cup_height = 15.0
+cup_diameter = 60.0
+dip_depth = 8.0
+dip_time = 500
+dip_interval = 50
+blot_x = 180.0
+blot_y = 200.0

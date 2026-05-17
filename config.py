@@ -1,0 +1,176 @@
+"""Pen Plotter — Configuration, tool profiles, and calibration data."""
+
+import json
+import os
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Optional
+
+import toml
+
+BASE_DIR = Path(__file__).parent
+PROFILES_DIR = BASE_DIR / "profiles"
+CALIBRATION_FILE = BASE_DIR / "calibration.json"
+OUTPUT_DIR = BASE_DIR / "output"
+
+
+# ── Printer defaults ────────────────────────────────────────────────
+
+PRINTER_BED_X = 220.0  # mm
+PRINTER_BED_Y = 220.0  # mm
+
+
+# ── Page size presets ────────────────────────────────────────────────
+
+PAGE_PRESETS = {
+    "220mm": (220, 220),
+    "A4": (210, 297),
+    "A5": (148, 210),
+    "Letter": (216, 279),
+    "4x6": (102, 152),
+    "5x7": (127, 178),
+    "Custom": None,
+}
+
+PAGE_SIZE_FILE = BASE_DIR / "page_size.json"
+
+
+def load_page_size() -> dict:
+    """Load saved page size. Defaults to 220x220."""
+    if PAGE_SIZE_FILE.exists():
+        try:
+            with open(PAGE_SIZE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"width": 220, "height": 220, "preset": "220mm"}
+
+
+def save_page_size(width: float, height: float, preset: str = "custom"):
+    """Save page size to disk."""
+    with open(PAGE_SIZE_FILE, "w") as f:
+        json.dump({"width": float(width), "height": float(height), "preset": preset}, f, indent=2)
+
+
+# ── Data classes ────────────────────────────────────────────────────
+
+@dataclass
+class MovementConfig:
+    draw_speed: float = 1500.0    # mm/min
+    travel_speed: float = 3000.0  # mm/min
+    lift_height: float = 5.0      # mm
+
+
+@dataclass
+class HeightConfig:
+    pen_down_z: float = 0.0   # calibrated
+    pen_up_z: float = 5.0     # = pen_down_z + lift_height
+    offset_x: float = 0.0     # pen X offset from hotend
+    offset_y: float = 0.0     # pen Y offset from hotend
+
+
+@dataclass
+class WaterConfig:
+    enabled: bool = False
+    cup_x: float = 200.0
+    cup_y: float = 200.0
+    cup_height: float = 15.0
+    cup_diameter: float = 60.0
+    dip_depth: float = 8.0
+    dip_time: int = 500        # ms
+    dip_interval: int = 50     # segments between dips
+    blot_x: float = 180.0
+    blot_y: float = 200.0
+
+
+@dataclass
+class ToolProfile:
+    name: str = "Pencil"
+    movement: MovementConfig = field(default_factory=MovementConfig)
+    height: HeightConfig = field(default_factory=HeightConfig)
+    water: WaterConfig = field(default_factory=WaterConfig)
+
+    def recalc_pen_up(self):
+        """Recalculate pen_up_z from pen_down_z + lift_height."""
+        self.height.pen_up_z = self.height.pen_down_z + self.movement.lift_height
+
+
+# ── Profile I/O ─────────────────────────────────────────────────────
+
+def _profile_path(tool_name: str) -> Path:
+    return PROFILES_DIR / f"{tool_name}.toml"
+
+
+def list_profiles() -> list[str]:
+    """List available tool profile names."""
+    if not PROFILES_DIR.exists():
+        return []
+    return [p.stem for p in sorted(PROFILES_DIR.glob("*.toml"))]
+
+
+def load_profile(tool_name: str) -> ToolProfile:
+    """Load a tool profile from TOML, merging saved calibration data."""
+    path = _profile_path(tool_name)
+    if not path.exists():
+        raise FileNotFoundError(f"Profile not found: {path}")
+
+    raw = toml.load(path)
+    tool = raw.get("tool", {})
+    mv = raw.get("movement", {})
+    ht = raw.get("height", {})
+    wt = raw.get("water", {})
+
+    profile = ToolProfile(
+        name=tool.get("name", tool_name.title()),
+        movement=MovementConfig(**{k: v for k, v in mv.items() if k in MovementConfig.__dataclass_fields__}),
+        height=HeightConfig(**{k: v for k, v in ht.items() if k in HeightConfig.__dataclass_fields__}),
+        water=WaterConfig(**{k: v for k, v in wt.items() if k in WaterConfig.__dataclass_fields__}),
+    )
+
+    # Merge calibration data if saved
+    cal = load_calibration()
+    if tool_name in cal:
+        profile.height.pen_down_z = cal[tool_name]["pen_down_z"]
+        profile.height.pen_up_z = cal[tool_name].get("pen_up_z", profile.height.pen_down_z + profile.movement.lift_height)
+        profile.height.offset_x = cal[tool_name].get("offset_x", 0.0)
+        profile.height.offset_y = cal[tool_name].get("offset_y", 0.0)
+
+    return profile
+
+
+def save_profile(tool_name: str, profile: ToolProfile):
+    """Save a tool profile back to TOML."""
+    path = _profile_path(tool_name)
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "tool": {"name": profile.name},
+        "movement": asdict(profile.movement),
+        "height": asdict(profile.height),
+        "water": asdict(profile.water),
+    }
+    toml.dump(data, path)
+
+
+# ── Calibration I/O ─────────────────────────────────────────────────
+
+def load_calibration() -> dict:
+    """Load calibration data for all tools."""
+    if not CALIBRATION_FILE.exists():
+        return {}
+    with open(CALIBRATION_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_calibration(tool_name: str, pen_down_z: float, pen_up_z: float,
+                     offset_x: float = 0.0, offset_y: float = 0.0):
+    """Save calibration for a specific tool."""
+    cal = load_calibration()
+    cal[tool_name] = {
+        "pen_down_z": round(pen_down_z, 3),
+        "pen_up_z": round(pen_up_z, 3),
+        "offset_x": round(offset_x, 3),
+        "offset_y": round(offset_y, 3),
+    }
+    with open(CALIBRATION_FILE, "w") as f:
+        json.dump(cal, f, indent=2)
