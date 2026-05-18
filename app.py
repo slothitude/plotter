@@ -493,6 +493,7 @@ def home():
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     try:
+        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # lift Z first
         serial.send_command("G28")                                    # home to establish position
         serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # raise to safe
         serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to water cup
