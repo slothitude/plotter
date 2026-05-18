@@ -725,8 +725,8 @@ def get_settings(tool_name):
                 "dip_depth": profile.water.dip_depth,
                 "dip_time": profile.water.dip_time,
                 "dip_interval": profile.water.dip_interval,
-                "blot_x": profile.water.blot_x,
-                "blot_y": profile.water.blot_y,
+                "scrape_distance": profile.water.scrape_distance,
+                "scrape_speed": profile.water.scrape_speed,
             },
             "fill": {
                 "enabled": profile.fill.enabled,

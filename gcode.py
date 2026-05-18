@@ -436,24 +436,19 @@ def apply_fill(polylines: list[Polyline], fill_config) -> list[Polyline]:
 # ── G-code Generation ───────────────────────────────────────────────
 
 def _water_dip_gcode(profile: config.ToolProfile) -> list[str]:
-    """Generate G-code for a water/brush dip sequence."""
+    """Generate G-code for a water/brush dip + rim scrape sequence."""
     w = profile.water
     lines = []
-    approach_z = w.cup_height + 2.0
     dip_z = w.cup_height - w.dip_depth
 
     safe_z = max(config.SAFE_Z, profile.height.pen_up_z)
     lines.append(f"; --- Water dip ---")
     lines.append(f"G1 Z{safe_z:.3f} F{profile.movement.travel_speed:.0f}")
     lines.append(f"G0 X{w.cup_x:.3f} Y{w.cup_y:.3f}")
-    lines.append(f"G1 Z{approach_z:.3f} F500")
     lines.append(f"G1 Z{dip_z:.3f} F500")
     lines.append(f"G4 P{w.dip_time}")
-    lines.append(f"G1 Z{safe_z:.3f} F500")
-    lines.append(f"G0 X{w.blot_x:.3f} Y{w.blot_y:.3f}")
-    blot_z = profile.height.pen_down_z + 1.0
-    lines.append(f"G1 Z{blot_z:.3f} F500")
-    lines.append(f"G4 P200")
+    lines.append(f"G1 Z{w.cup_height:.3f} F500")
+    lines.append(f"G1 X{w.cup_x + w.scrape_distance:.3f} F{w.scrape_speed:.0f}")
     lines.append(f"G1 Z{safe_z:.3f} F500")
     lines.append(f"; --- End water dip ---")
     return lines

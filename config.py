@@ -79,15 +79,15 @@ class HeightConfig:
 @dataclass
 class WaterConfig:
     enabled: bool = False
-    cup_x: float = 200.0
+    cup_x: float = 0.0
     cup_y: float = 200.0
     cup_height: float = 15.0
     cup_diameter: float = 60.0
-    dip_depth: float = 8.0
+    dip_depth: float = 15.0
     dip_time: int = 500        # ms
     dip_interval: int = 50     # segments between dips
-    blot_x: float = 180.0
-    blot_y: float = 200.0
+    scrape_distance: float = 15.0   # mm sideways at rim to shed excess water
+    scrape_speed: float = 300.0     # mm/min — slow for bristle scrape
 
 
 @dataclass
@@ -168,7 +168,8 @@ def save_profile(tool_name: str, profile: ToolProfile):
         "water": asdict(profile.water),
         "fill": asdict(profile.fill),
     }
-    toml.dump(data, path)
+    with open(path, "w") as f:
+        toml.dump(data, f)
 
 
 # ── Calibration I/O ─────────────────────────────────────────────────

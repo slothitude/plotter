@@ -1055,8 +1055,8 @@ function loadSettings(tool) {
             document.getElementById('set-dip-depth').value = data.water.dip_depth;
             document.getElementById('set-dip-time').value = data.water.dip_time;
             document.getElementById('set-dip-interval').value = data.water.dip_interval;
-            document.getElementById('set-blot-x').value = data.water.blot_x;
-            document.getElementById('set-blot-y').value = data.water.blot_y;
+            document.getElementById('set-scrape-distance').value = data.water.scrape_distance;
+            document.getElementById('set-scrape-speed').value = data.water.scrape_speed;
 
             // Fill settings
             if (data.fill) {
@@ -1093,8 +1093,8 @@ function saveSettings() {
                 dip_depth: parseFloat(document.getElementById('set-dip-depth').value),
                 dip_time: parseInt(document.getElementById('set-dip-time').value),
                 dip_interval: parseInt(document.getElementById('set-dip-interval').value),
-                blot_x: parseFloat(document.getElementById('set-blot-x').value),
-                blot_y: parseFloat(document.getElementById('set-blot-y').value),
+                scrape_distance: parseFloat(document.getElementById('set-scrape-distance').value),
+                scrape_speed: parseFloat(document.getElementById('set-scrape-speed').value),
             },
             fill: {
                 enabled: document.getElementById('set-fill-enabled').checked,
