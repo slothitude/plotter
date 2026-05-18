@@ -14,6 +14,8 @@ const state = {
     pagePreset: '220mm',
     pageOffsetX: 0,
     pageOffsetY: 0,
+    penOffsetX: 0,
+    penOffsetY: 0,
     plotTool: 'pencil',
     ws: null,
     statusInterval: null,
@@ -111,11 +113,9 @@ function jog(axis, distance) {
 function updatePosition(pos) {
     if (pos.X !== undefined) {
         document.getElementById('pos-x').textContent = pos.X.toFixed(3);
-        document.getElementById('cal-ox').textContent = pos.X.toFixed(3);
     }
     if (pos.Y !== undefined) {
         document.getElementById('pos-y').textContent = pos.Y.toFixed(3);
-        document.getElementById('cal-oy').textContent = pos.Y.toFixed(3);
     }
     if (pos.Z !== undefined) {
         document.getElementById('pos-z').textContent = pos.Z.toFixed(3);
@@ -255,19 +255,76 @@ function initCalibration() {
         });
     });
 
+    // Pen offset: UI shows actual pen-to-hotend distance
+    // Backend stores hotend position when pen is at bed center (110)
+    // Conversion: pen_offset = 110 - stored_offset  /  stored_offset = 110 - pen_offset
+    const BED_CENTER = 110;
+
+    // Load offset into inputs when calibration data loads
+    function loadPenOffsetInputs() {
+        api('/api/calibration').then(r => r.json()).then(cal => {
+            const data = cal[state.calTool];
+            if (data) {
+                const storedOx = data.offset_x || 0;
+                const storedOy = data.offset_y || 0;
+                document.getElementById('cal-offset-x').value = storedOx ? (BED_CENTER - storedOx).toFixed(1) : 0;
+                document.getElementById('cal-offset-y').value = storedOy ? (BED_CENTER - storedOy).toFixed(1) : 0;
+                showEffectiveArea(storedOx, storedOy);
+            }
+        });
+    }
+    loadPenOffsetInputs();
+
+    // Reload offset inputs when switching cal tool
+    const origCalToolHandler = document.getElementById('cal-tool').onchange;
+    document.getElementById('cal-tool').addEventListener('change', () => {
+        setTimeout(loadPenOffsetInputs, 100);
+    });
+
+    // "Read Current" — reads hotend position, computes pen offset (assumes pen is at bed center)
+    document.getElementById('btn-cal-read-offset').addEventListener('click', () => {
+        api('/api/status').then(r => r.json()).then(data => {
+            if (!data.position || !data.position.X) return toast('No position — connect and home first', 'warn');
+            const hx = parseFloat(data.position.X);
+            const hy = parseFloat(data.position.Y);
+            document.getElementById('cal-offset-x').value = (BED_CENTER - hx).toFixed(1);
+            document.getElementById('cal-offset-y').value = (BED_CENTER - hy).toFixed(1);
+            toast(`Pen offset read: X=${(BED_CENTER - hx).toFixed(1)} Y=${(BED_CENTER - hy).toFixed(1)}`, 'info');
+        });
+    });
+
+    // "Save Offset" — converts pen offset to stored format and saves
     document.getElementById('btn-cal-save-offset').addEventListener('click', () => {
-        const ox = parseFloat(document.getElementById('cal-ox').textContent);
-        const oy = parseFloat(document.getElementById('cal-oy').textContent);
-        if (isNaN(ox) || isNaN(oy)) return toast('No position to save — connect and home first', 'warn');
+        const penOx = parseFloat(document.getElementById('cal-offset-x').value) || 0;
+        const penOy = parseFloat(document.getElementById('cal-offset-y').value) || 0;
+        const storedOx = BED_CENTER - penOx;
+        const storedOy = BED_CENTER - penOy;
         api('/api/calibration/offset', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tool: state.calTool, offset_x: ox, offset_y: oy }),
+            body: JSON.stringify({ tool: state.calTool, offset_x: storedOx, offset_y: storedOy }),
         }).then(r => r.json()).then(data => {
             if (data.ok) {
-                toast(`Saved ${state.calTool} offset: X=${ox}, Y=${oy}`, 'success');
+                toast(`Saved ${state.calTool} pen offset: X=${penOx} Y=${penOy}`, 'success');
                 loadCalibration();
-                showEffectiveArea(ox, oy);
+                showEffectiveArea(storedOx, storedOy);
+            }
+        });
+    });
+
+    // "Clear" — sets offset to 0
+    document.getElementById('btn-cal-clear-offset').addEventListener('click', () => {
+        document.getElementById('cal-offset-x').value = 0;
+        document.getElementById('cal-offset-y').value = 0;
+        api('/api/calibration/offset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: state.calTool, offset_x: 0, offset_y: 0 }),
+        }).then(r => r.json()).then(data => {
+            if (data.ok) {
+                toast('Pen offset cleared', 'info');
+                loadCalibration();
+                showEffectiveArea(0, 0);
             }
         });
     });
@@ -360,13 +417,22 @@ function loadCalibration() {
             div.className = 'cal-saved-item';
             const ox = heights.offset_x || 0;
             const oy = heights.offset_y || 0;
+            const penOx = 110 - ox;
+            const penOy = 110 - oy;
             div.innerHTML = `
                 <span class="tool-name">${tool}</span>
                 <span class="height-values">
                     Down: ${heights.pen_down_z.toFixed(3)} mm · Up: ${heights.pen_up_z.toFixed(3)} mm<br>
-                    Offset: X=${ox.toFixed(1)} Y=${oy.toFixed(1)} mm
+                    Pen offset: X=${penOx.toFixed(1)} Y=${penOy.toFixed(1)} mm
                 </span>`;
             list.appendChild(div);
+        }
+
+        // Update pen offset for current plot tool
+        const plotCal = cal[state.plotTool];
+        if (plotCal) {
+            state.penOffsetX = 110 - (plotCal.offset_x || 110);
+            state.penOffsetY = 110 - (plotCal.offset_y || 110);
         }
     });
 }
@@ -725,71 +791,106 @@ function updateStats(stats) {
 }
 
 // ── Canvas Preview ───────────────────────────────────────────────────
+
+const BED_SIZE = 220; // physical bed mm
+
 function drawEmptyCanvas() {
     const canvas = document.getElementById('preview-canvas');
     const ctx = canvas.getContext('2d');
-    const info = drawGrid(ctx, canvas.width, canvas.height);
+    drawBed(ctx, canvas.width, canvas.height);
 }
 
-function drawGrid(ctx, w, h) {
+function drawBed(ctx, w, h) {
     ctx.fillStyle = '#0d1117';
     ctx.fillRect(0, 0, w, h);
 
-    if (!state.showGrid) {
-        return { padding: 20, scale: 1, bedW: state.pageWidth, bedH: state.pageHeight };
-    }
-
-    const bedW = state.pageWidth;
-    const bedH = state.pageHeight;
     const padding = 20;
     const drawW = w - padding * 2;
     const drawH = h - padding * 2;
-    const scale = Math.min(drawW / bedW, drawH / bedH);
+    const scale = Math.min(drawW / BED_SIZE, drawH / BED_SIZE);
 
-    ctx.strokeStyle = '#1e2530';
-    ctx.lineWidth = 0.5;
-
-    for (let i = 0; i <= bedW; i += 10) {
-        const x = padding + i * scale;
-        ctx.beginPath();
-        ctx.moveTo(x, padding);
-        ctx.lineTo(x, padding + bedH * scale);
-        ctx.stroke();
+    // Grid lines (every 10mm)
+    if (state.showGrid) {
+        ctx.strokeStyle = '#1a1f2a';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= BED_SIZE; i += 10) {
+            const x = padding + i * scale;
+            ctx.beginPath(); ctx.moveTo(x, padding); ctx.lineTo(x, padding + BED_SIZE * scale); ctx.stroke();
+        }
+        for (let i = 0; i <= BED_SIZE; i += 10) {
+            const y = padding + i * scale;
+            ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(padding + BED_SIZE * scale, y); ctx.stroke();
+        }
+        // 50mm major grid
+        ctx.strokeStyle = '#222838';
+        ctx.lineWidth = 0.8;
+        for (let i = 0; i <= BED_SIZE; i += 50) {
+            const x = padding + i * scale;
+            ctx.beginPath(); ctx.moveTo(x, padding); ctx.lineTo(x, padding + BED_SIZE * scale); ctx.stroke();
+            const y = padding + i * scale;
+            ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(padding + BED_SIZE * scale, y); ctx.stroke();
+        }
     }
-    for (let i = 0; i <= bedH; i += 10) {
-        const y = padding + i * scale;
-        ctx.beginPath();
-        ctx.moveTo(padding, y);
-        ctx.lineTo(padding + bedW * scale, y);
-        ctx.stroke();
+
+    // Effective area (pen-reachable zone) — dashed orange
+    if (state.penOffsetX !== 0 || state.penOffsetY !== 0) {
+        const effOx = Math.max(0, state.penOffsetX);
+        const effOy = Math.max(0, state.penOffsetY);
+        const effW = Math.min(BED_SIZE, BED_SIZE + state.penOffsetX) - effOx;
+        const effH = Math.min(BED_SIZE, BED_SIZE + state.penOffsetY) - effOy;
+        ctx.fillStyle = '#ff990008';
+        ctx.fillRect(padding + effOx * scale, padding + effOy * scale, effW * scale, effH * scale);
+        ctx.strokeStyle = '#ff990044';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(padding + effOx * scale, padding + effOy * scale, effW * scale, effH * scale);
+        ctx.setLineDash([]);
     }
 
-    ctx.strokeStyle = '#2a3545';
+    // Page rectangle
+    const pageX = padding + state.pageOffsetX * scale;
+    const pageY = padding + state.pageOffsetY * scale;
+    const pageW = state.pageWidth * scale;
+    const pageH = state.pageHeight * scale;
+    ctx.fillStyle = '#ffffff06';
+    ctx.fillRect(pageX, pageY, pageW, pageH);
+    ctx.strokeStyle = '#ffffff30';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(padding, padding, bedW * scale, bedH * scale);
+    ctx.strokeRect(pageX, pageY, pageW, pageH);
 
-    ctx.fillStyle = '#2a3545';
+    // Page size label
+    ctx.fillStyle = '#ffffff40';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.fillText(`${state.pageWidth}x${state.pageHeight}mm`, pageX + 2, pageY + pageH - 3);
+
+    // Bed outline (always on top)
+    ctx.strokeStyle = '#3a4555';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(padding, padding, BED_SIZE * scale, BED_SIZE * scale);
+
+    // Labels
+    ctx.fillStyle = '#3a4555';
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.fillText('(0,0)', padding - 2, padding - 4);
-    ctx.fillText(`${bedW}x${bedH}mm`, padding + bedW * scale - 40, padding + bedH * scale + 12);
+    ctx.fillText(`${BED_SIZE}x${BED_SIZE}`, padding + BED_SIZE * scale - 40, padding + BED_SIZE * scale + 12);
 
-    return { padding, scale, bedW, bedH };
+    return { padding, scale };
 }
 
 function drawPreview(polylines, toolpath) {
     const canvas = document.getElementById('preview-canvas');
     const ctx = canvas.getContext('2d');
-    const { padding, scale, bedW, bedH } = drawGrid(ctx, canvas.width, canvas.height);
+    const { padding, scale } = drawBed(ctx, canvas.width, canvas.height);
 
     if (!polylines || !polylines.length) return;
 
-    // Draw toolpath if available
+    // If we have toolpath data (post-conversion), draw at actual bed coordinates
     if (toolpath && toolpath.length > 0) {
-        drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, toolpath);
+        drawToolpathOnCtx(ctx, padding, scale, toolpath);
         return;
     }
 
-    // Fallback: draw simple polylines
+    // Raw SVG preview: auto-scale to fit within page area
     let allPts = polylines.flat();
     if (!allPts.length) return;
 
@@ -800,84 +901,20 @@ function drawPreview(polylines, toolpath) {
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
     }
-
     const svgW = maxX - minX || 1;
     const svgH = maxY - minY || 1;
-    const margin = 10;
-    const availableW = bedW - margin * 2;
-    const availableH = bedH - margin * 2;
-    const fitScale = Math.min(availableW / svgW, availableH / svgH);
-    const offsetX = (bedW - svgW * fitScale) / 2 - minX * fitScale;
-    const offsetY = (bedH - svgH * fitScale) / 2 - minY * fitScale;
 
-    // Bounding box
-    ctx.strokeStyle = '#00e87b33';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    const bx = padding + (minX * fitScale + offsetX) * scale;
-    const by = padding + (minY * fitScale + offsetY) * scale;
-    const bw = svgW * fitScale * scale;
-    const bh = svgH * fitScale * scale;
-    ctx.strokeRect(bx, by, bw, bh);
-    ctx.setLineDash([]);
-
-    if (state.showDraw) {
-        ctx.strokeStyle = '#00e87b';
-        ctx.lineWidth = 1.2;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        for (const path of polylines) {
-            if (path.length < 2) continue;
-            ctx.beginPath();
-            const firstX = padding + (path[0][0] * fitScale + offsetX) * scale;
-            const firstY = padding + (path[0][1] * fitScale + offsetY) * scale;
-            ctx.moveTo(firstX, firstY);
-            for (let i = 1; i < path.length; i++) {
-                const px = padding + (path[i][0] * fitScale + offsetX) * scale;
-                const py = padding + (path[i][1] * fitScale + offsetY) * scale;
-                ctx.lineTo(px, py);
-            }
-            ctx.stroke();
-        }
-    }
-}
-
-function drawToolpath(ctx, w, h) {
-    const { padding, scale, bedW, bedH } = drawGrid(ctx, w, h);
-    if (!state.toolpath.length) return;
-    drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, state.toolpath);
-}
-
-function drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, toolpath) {
-    // Toolpath data is already in mm coordinates (transformed by backend)
-    // We need to fit it into the bed area for display
-    let allPts = [];
-    for (const seg of toolpath) {
-        allPts.push(...seg.points);
-    }
-    if (!allPts.length) return;
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const [x, y] of allPts) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-    }
-
-    const svgW = maxX - minX || 1;
-    const svgH = maxY - minY || 1;
-    const margin = 10;
-    const availableW = bedW - margin * 2;
-    const availableH = bedH - margin * 2;
-    const fitScale = Math.min(availableW / svgW, availableH / svgH);
-    const offsetX = (bedW - svgW * fitScale) / 2 - minX * fitScale;
-    const offsetY = (bedH - svgH * fitScale) / 2 - minY * fitScale;
+    // Fit SVG into page area
+    const margin = 5;
+    const areaW = state.pageWidth - margin * 2;
+    const areaH = state.pageHeight - margin * 2;
+    const fitScale = Math.min(areaW / svgW, areaH / svgH);
+    const svgOffsetX = state.pageOffsetX + (state.pageWidth - svgW * fitScale) / 2 - minX * fitScale;
+    const svgOffsetY = state.pageOffsetY + (state.pageHeight - svgH * fitScale) / 2 - minY * fitScale;
 
     const toCanvas = (px, py) => [
-        padding + (px * fitScale + offsetX) * scale,
-        padding + (py * fitScale + offsetY) * scale,
+        padding + (px * fitScale + svgOffsetX) * scale,
+        padding + (py * fitScale + svgOffsetY) * scale,
     ];
 
     // Bounding box
@@ -885,10 +922,40 @@ function drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, toolpath) {
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     const [bx, by] = toCanvas(minX, minY);
-    const bw = svgW * fitScale * scale;
-    const bh = svgH * fitScale * scale;
-    ctx.strokeRect(bx, by, bw, bh);
+    const [bxe, bye] = toCanvas(maxX, maxY);
+    ctx.strokeRect(bx, by, bxe - bx, bye - by);
     ctx.setLineDash([]);
+
+    if (state.showDraw) {
+        ctx.strokeStyle = '#00e87b88';
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (const path of polylines) {
+            if (path.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(...toCanvas(path[0][0], path[0][1]));
+            for (let i = 1; i < path.length; i++) {
+                ctx.lineTo(...toCanvas(path[i][0], path[i][1]));
+            }
+            ctx.stroke();
+        }
+    }
+}
+
+function drawToolpath(ctx, w, h) {
+    const { padding, scale } = drawBed(ctx, w, h);
+    if (!state.toolpath.length) return;
+    drawToolpathOnCtx(ctx, padding, scale, state.toolpath);
+}
+
+function drawToolpathOnCtx(ctx, padding, scale, toolpath) {
+    // Toolpath data is already in G-code coordinates (hotend mm)
+    // Just scale from mm to canvas — no auto-scaling
+    const toCanvas = (px, py) => [
+        padding + px * scale,
+        padding + py * scale,
+    ];
 
     // Travel moves (dim dashed)
     if (state.showTravel) {
@@ -898,10 +965,9 @@ function drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, toolpath) {
         for (const seg of toolpath) {
             if (seg.type !== 'travel' || seg.points.length < 2) continue;
             ctx.beginPath();
-            const [sx, sy] = toCanvas(seg.points[0][0], seg.points[0][1]);
-            ctx.moveTo(sx, sy);
-            const [ex, ey] = toCanvas(seg.points[seg.points.length - 1][0], seg.points[seg.points.length - 1][1]);
-            ctx.lineTo(ex, ey);
+            ctx.moveTo(...toCanvas(seg.points[0][0], seg.points[0][1]));
+            const last = seg.points[seg.points.length - 1];
+            ctx.lineTo(...toCanvas(last[0], last[1]));
             ctx.stroke();
         }
         ctx.setLineDash([]);
@@ -916,11 +982,9 @@ function drawToolpathOnCtx(ctx, padding, scale, bedW, bedH, toolpath) {
         for (const seg of toolpath) {
             if (seg.type !== 'draw' || seg.points.length < 2) continue;
             ctx.beginPath();
-            const [sx, sy] = toCanvas(seg.points[0][0], seg.points[0][1]);
-            ctx.moveTo(sx, sy);
+            ctx.moveTo(...toCanvas(seg.points[0][0], seg.points[0][1]));
             for (let i = 1; i < seg.points.length; i++) {
-                const [px, py] = toCanvas(seg.points[i][0], seg.points[i][1]);
-                ctx.lineTo(px, py);
+                ctx.lineTo(...toCanvas(seg.points[i][0], seg.points[i][1]));
             }
             ctx.stroke();
         }
@@ -936,7 +1000,6 @@ const PAGE_PRESETS = {
     '4x6': [102, 152],
     '5x7': [127, 178],
 };
-const BED_SIZE = 220; // physical bed mm
 
 function initPageSize() {
     const presetSel = document.getElementById('page-preset');
@@ -995,6 +1058,20 @@ function initPageSize() {
     heightInput.addEventListener('change', onDimChange);
     offsetXInput.addEventListener('change', savePageSize);
     offsetYInput.addEventListener('change', savePageSize);
+
+    // Mark Page Outline
+    document.getElementById('btn-mark-page').addEventListener('click', () => {
+        if (!state.connected) return toast('Connect printer first', 'warn');
+        savePageSize();  // ensure current values are saved
+        api('/api/mark-page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: state.plotTool }),
+        }).then(r => r.json()).then(data => {
+            if (data.ok) toast('Page outline marked — check corners', 'success');
+            else if (data.error) toast(data.error, 'error');
+        });
+    });
 }
 
 function autoCenterPage() {
@@ -1035,6 +1112,32 @@ function initSettings() {
     });
 
     document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+
+    // Tool change park buttons
+    document.getElementById('btn-park-goto').addEventListener('click', () => {
+        api('/api/tool-change-park', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'goto', tool: state.settingsTool }),
+        }).then(r => r.json()).then(data => {
+            if (data.ok) toast('Moved to park position', 'success');
+            else if (data.error) toast(data.error, 'error');
+        });
+    });
+    document.getElementById('btn-park-save').addEventListener('click', () => {
+        api('/api/tool-change-park', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', tool: state.settingsTool }),
+        }).then(r => r.json()).then(data => {
+            if (data.ok) {
+                document.getElementById('set-p2-change-x').value = data.change_x;
+                document.getElementById('set-p2-change-y').value = data.change_y;
+                document.getElementById('set-p2-change-z').value = data.change_z;
+                toast(`Park saved: X${data.change_x} Y${data.change_y} Z${data.change_z}`, 'success');
+            } else if (data.error) toast(data.error, 'error');
+        });
+    });
 }
 
 function loadSettings(tool) {
@@ -1057,6 +1160,16 @@ function loadSettings(tool) {
             document.getElementById('set-dip-interval').value = data.water.dip_interval;
             document.getElementById('set-scrape-distance').value = data.water.scrape_distance;
             document.getElementById('set-scrape-speed').value = data.water.scrape_speed;
+            document.getElementById('set-two-pass').checked = data.water.two_pass;
+            if (data.water.pass2) {
+                document.getElementById('set-p2-draw-speed').value = data.water.pass2.draw_speed;
+                document.getElementById('set-p2-travel-speed').value = data.water.pass2.travel_speed;
+                document.getElementById('set-p2-pen-down-z').value = data.water.pass2.pen_down_z;
+                document.getElementById('set-p2-lift-height').value = data.water.pass2.lift_height;
+                document.getElementById('set-p2-change-z').value = data.water.pass2.change_z;
+                document.getElementById('set-p2-change-x').value = data.water.pass2.change_x;
+                document.getElementById('set-p2-change-y').value = data.water.pass2.change_y;
+            }
 
             // Fill settings
             if (data.fill) {
@@ -1067,7 +1180,9 @@ function loadSettings(tool) {
             }
 
             const waterPanel = document.getElementById('water-settings');
+            const pass2Panel = document.getElementById('pass2-settings');
             waterPanel.style.display = tool === 'watercolor' ? 'block' : 'none';
+            pass2Panel.style.display = tool === 'watercolor' ? 'block' : 'none';
         });
 }
 
@@ -1086,6 +1201,7 @@ function saveSettings() {
             },
             water: {
                 enabled: document.getElementById('set-water-enabled').checked,
+                two_pass: document.getElementById('set-two-pass').checked,
                 cup_x: parseFloat(document.getElementById('set-cup-x').value),
                 cup_y: parseFloat(document.getElementById('set-cup-y').value),
                 cup_height: parseFloat(document.getElementById('set-cup-height').value),
@@ -1095,6 +1211,15 @@ function saveSettings() {
                 dip_interval: parseInt(document.getElementById('set-dip-interval').value),
                 scrape_distance: parseFloat(document.getElementById('set-scrape-distance').value),
                 scrape_speed: parseFloat(document.getElementById('set-scrape-speed').value),
+                pass2: {
+                    draw_speed: parseFloat(document.getElementById('set-p2-draw-speed').value),
+                    travel_speed: parseFloat(document.getElementById('set-p2-travel-speed').value),
+                    pen_down_z: parseFloat(document.getElementById('set-p2-pen-down-z').value),
+                    lift_height: parseFloat(document.getElementById('set-p2-lift-height').value),
+                    change_z: parseFloat(document.getElementById('set-p2-change-z').value),
+                    change_x: parseFloat(document.getElementById('set-p2-change-x').value),
+                    change_y: parseFloat(document.getElementById('set-p2-change-y').value),
+                },
             },
             fill: {
                 enabled: document.getElementById('set-fill-enabled').checked,

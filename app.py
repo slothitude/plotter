@@ -610,6 +610,77 @@ def test_dot():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Mark Page Outline ─────────────────────────────────────────────────
+
+@app.route("/api/mark-page", methods=["POST"])
+def mark_page():
+    """Draw L-marks at the 4 corners of the page so user can verify alignment."""
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+
+    data = request.json or {}
+    tool = data.get("tool", "pencil")
+
+    try:
+        profile = config.load_profile(tool)
+    except FileNotFoundError:
+        return jsonify({"error": f"Profile '{tool}' not found"}), 404
+
+    page = config.load_page_size()
+    pw = page["width"]
+    ph = page["height"]
+    pox = page.get("offset_x", 0)
+    poy = page.get("offset_y", 0)
+
+    ht = profile.height
+    mv = profile.movement
+
+    # Compute pen offset (same math as gcode.py)
+    pen_ox = ht.offset_x
+    pen_oy = ht.offset_y
+    if pen_ox != 0 or pen_oy != 0:
+        pen_phys_x = -(pen_ox - config.PRINTER_BED_X / 2)
+        pen_phys_y = -(pen_oy - config.PRINTER_BED_Y / 2)
+    else:
+        pen_phys_x, pen_phys_y = 0, 0
+
+    # Page corners in pen-space → convert to hotend-space
+    corners_pen = [
+        (pox, poy),                  # front-left
+        (pox + pw, poy),             # front-right
+        (pox + pw, poy + ph),        # back-right
+        (pox, poy + ph),             # back-left
+    ]
+
+    safe_z = config.SAFE_Z
+    pen_down_z = ht.pen_down_z
+    arm = 10.0  # mm mark length
+
+    try:
+        serial.send_command(f"G90 ; Absolute positioning")
+        serial.send_command(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe Z")
+
+        for i, (cpx, cpy) in enumerate(corners_pen):
+            # Convert to hotend coords
+            hx = cpx - pen_phys_x
+            hy = cpy - pen_phys_y
+
+            # Draw L-shape at corner
+            dx = arm if i in (0, 3) else -arm  # mark inward
+            dy = arm if i in (0, 1) else -arm
+
+            serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} F{mv.travel_speed:.0f} ; Corner {i+1}")
+            serial.send_command(f"G1 Z{pen_down_z:.3f} F300 ; Pen down")
+            serial.send_command(f"G1 X{hx + dx:.3f} Y{hy:.3f} F500 ; Mark X")
+            serial.send_command(f"G1 X{hx + dx:.3f} Y{hy + dy:.3f} F500 ; Mark Y")
+            serial.send_command(f"G1 Z{safe_z:.3f} F300 ; Pen up")
+
+        serial.send_command("G0 X0 Y0 F3000 ; Return home")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Bed Leveling ─────────────────────────────────────────────────────
 
 bed_level_state: dict | None = None
@@ -697,6 +768,52 @@ def _draw_l_shape(corner, pen_down_z, safe_z):
     serial.send_command(f"G1 Z{safe_z:.3f} F300")
 
 
+# ── Tool Change Park ─────────────────────────────────────────────────
+
+@app.route("/api/tool-change-park", methods=["POST"])
+def tool_change_park():
+    """Move to the tool change park position, or save current position as park."""
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+
+    data = request.json or {}
+    action = data.get("action", "goto")
+    tool = data.get("tool", "watercolor")
+
+    try:
+        profile = config.load_profile(tool)
+    except FileNotFoundError:
+        return jsonify({"error": f"Profile '{tool}' not found"}), 404
+
+    p2 = profile.water.pass2
+
+    if action == "goto":
+        try:
+            serial.send_command(f"G90 ; Absolute positioning")
+            serial.send_command(f"G1 Z{p2.change_z:.3f} F3000 ; Raise to tool change height")
+            serial.send_command(f"G1 X{p2.change_x:.3f} Y{p2.change_y:.3f} F3000 ; Move to park")
+            pos = serial.get_position()
+            return jsonify({"ok": True, "position": pos})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    elif action == "save":
+        try:
+            pos = serial.get_position()
+            x = round(float(pos.get("X", 0)), 1)
+            y = round(float(pos.get("Y", 0)), 1)
+            z = round(float(pos.get("Z", 0)), 1)
+            profile.water.pass2.change_x = x
+            profile.water.pass2.change_y = y
+            profile.water.pass2.change_z = z
+            config.save_profile(tool, profile)
+            return jsonify({"ok": True, "change_x": x, "change_y": y, "change_z": z})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    return jsonify({"error": f"Unknown action: {action}"}), 400
+
+
 # ── Settings ─────────────────────────────────────────────────────────
 
 @app.route("/api/settings/<tool_name>", methods=["GET"])
@@ -719,6 +836,7 @@ def get_settings(tool_name):
             },
             "water": {
                 "enabled": profile.water.enabled,
+                "two_pass": profile.water.two_pass,
                 "cup_x": profile.water.cup_x,
                 "cup_y": profile.water.cup_y,
                 "cup_height": profile.water.cup_height,
@@ -728,6 +846,15 @@ def get_settings(tool_name):
                 "dip_interval": profile.water.dip_interval,
                 "scrape_distance": profile.water.scrape_distance,
                 "scrape_speed": profile.water.scrape_speed,
+                "pass2": {
+                    "draw_speed": profile.water.pass2.draw_speed,
+                    "travel_speed": profile.water.pass2.travel_speed,
+                    "pen_down_z": profile.water.pass2.pen_down_z,
+                    "lift_height": profile.water.pass2.lift_height,
+                    "change_z": profile.water.pass2.change_z,
+                    "change_x": profile.water.pass2.change_x,
+                    "change_y": profile.water.pass2.change_y,
+                },
             },
             "fill": {
                 "enabled": profile.fill.enabled,
@@ -756,6 +883,12 @@ def save_settings(tool_name):
         for k, v in data["water"].items():
             if k == "enabled":
                 profile.water.enabled = bool(v)
+            elif k == "two_pass":
+                profile.water.two_pass = bool(v)
+            elif k == "pass2":
+                for pk, pv in v.items():
+                    if hasattr(profile.water.pass2, pk):
+                        setattr(profile.water.pass2, pk, float(pv))
             elif hasattr(profile.water, k):
                 setattr(profile.water, k, float(v) if isinstance(v, (int, float)) else v)
     if "fill" in data:

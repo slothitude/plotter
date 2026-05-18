@@ -159,6 +159,7 @@
                                     <input type="number" id="page-offset-y" class="input-field" value="0" step="1"> mm
                                 </div>
                             </div>
+                            <button id="btn-mark-page" class="btn btn-outline btn-sm btn-block" style="margin-top:6px">Mark Page Outline</button>
                         </section>
 
                         <!-- Tool & Convert -->
@@ -290,11 +291,15 @@
                                 <button id="btn-cal-save" class="btn btn-primary btn-block">Save Current Z as Pen-Down Height</button>
                                 <div class="cal-offset-section">
                                     <div class="cal-offset-header">Pen XY Offset</div>
-                                    <p class="cal-desc">Jog the pen until it is centered over bed center (110, 110), then save. The hotend reading at that position is the offset.</p>
+                                    <p class="cal-desc">Distance from hotend to pen tip. Type directly or jog pen over bed center and click "Read Current".</p>
                                     <div class="cal-offset-row">
-                                        <span class="cal-offset-val">X: <strong id="cal-ox">--</strong></span>
-                                        <span class="cal-offset-val">Y: <strong id="cal-oy">--</strong></span>
-                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Current XY as Offset</button>
+                                        <span class="cal-offset-val">X: <input type="number" id="cal-offset-x" class="input-field" style="width:70px" step="1"> mm</span>
+                                        <span class="cal-offset-val">Y: <input type="number" id="cal-offset-y" class="input-field" style="width:70px" step="1"> mm</span>
+                                    </div>
+                                    <div class="cal-offset-row" style="margin-top:6px">
+                                        <button id="btn-cal-read-offset" class="btn btn-outline btn-sm">Read Current</button>
+                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Offset</button>
+                                        <button id="btn-cal-clear-offset" class="btn btn-sm btn-bed-stop">Clear</button>
                                     </div>
                                     <div id="effective-area-info" class="cal-desc" style="display:none; margin-top:8px; color:#aaa;"></div>
                                 </div>
@@ -398,6 +403,54 @@
                                 </div>
                             </div>
                         </section>
+                        <section class="panel" id="pass2-settings">
+                            <h3 class="panel-title">Pass 2 — Wet Brush</h3>
+                            <div class="settings-grid">
+                                <div class="setting-field full-width">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" id="set-two-pass" checked>
+                                        <span>Two-pass watercolor</span>
+                                    </label>
+                                </div>
+                                <div class="setting-field">
+                                    <label>Draw Speed <span class="unit">mm/min</span></label>
+                                    <input type="number" id="set-p2-draw-speed" class="input-field" step="50">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Travel Speed <span class="unit">mm/min</span></label>
+                                    <input type="number" id="set-p2-travel-speed" class="input-field" step="100">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Pen Down Z <span class="unit">mm</span></label>
+                                    <input type="number" id="set-p2-pen-down-z" class="input-field" step="0.1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Lift Height <span class="unit">mm</span></label>
+                                    <input type="number" id="set-p2-lift-height" class="input-field" step="0.5">
+                                </div>
+                                <div class="setting-field full-width" style="margin-top:8px">
+                                    <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-2)">Tool Change Park Position</label>
+                                </div>
+                                <div class="setting-field">
+                                    <label>Z Height <span class="unit">mm</span></label>
+                                    <input type="number" id="set-p2-change-z" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>X Position <span class="unit">mm</span></label>
+                                    <input type="number" id="set-p2-change-x" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Y Position <span class="unit">mm</span></label>
+                                    <input type="number" id="set-p2-change-y" class="input-field" step="1">
+                                </div>
+                                <div class="setting-field full-width">
+                                    <div style="display:flex;gap:6px">
+                                        <button id="btn-park-goto" class="btn btn-outline btn-sm" style="flex:1">Go to Park</button>
+                                        <button id="btn-park-save" class="btn btn-outline btn-sm" style="flex:1">Save Current</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
                         <section class="panel" id="fill-settings">
                             <h3 class="panel-title">Fill / Hatch</h3>
                             <div class="settings-grid">
@@ -458,6 +511,6 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=8"></script>
 </body>
 </html>

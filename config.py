@@ -77,8 +77,21 @@ class HeightConfig:
 
 
 @dataclass
+class Pass2Config:
+    """Second-pass (wet brush) settings for two-pass watercolor."""
+    draw_speed: float = 800.0       # mm/min — slower for wet brushing
+    travel_speed: float = 2500.0    # mm/min
+    pen_down_z: float = 0.0         # may differ from pencil contact
+    lift_height: float = 5.0        # mm
+    change_z: float = 50.0          # mm — Z height during tool swap
+    change_x: float = 110.0         # mm — X park position for tool swap
+    change_y: float = 110.0         # mm — Y park position for tool swap
+
+
+@dataclass
 class WaterConfig:
     enabled: bool = False
+    two_pass: bool = True               # enable two-pass watercolor mode
     cup_x: float = 0.0
     cup_y: float = 200.0
     cup_height: float = 15.0
@@ -88,6 +101,7 @@ class WaterConfig:
     dip_interval: int = 50     # segments between dips
     scrape_distance: float = 15.0   # mm sideways at rim to shed excess water
     scrape_speed: float = 300.0     # mm/min — slow for bristle scrape
+    pass2: Pass2Config = field(default_factory=Pass2Config)
 
 
 @dataclass
@@ -137,6 +151,8 @@ def load_profile(tool_name: str) -> ToolProfile:
     wt = raw.get("water", {})
     fl = raw.get("fill", {})
 
+    # Parse pass2 separately (nested dataclass)
+    pass2_raw = wt.pop("pass2", {})
     profile = ToolProfile(
         name=tool.get("name", tool_name.title()),
         movement=MovementConfig(**{k: v for k, v in mv.items() if k in MovementConfig.__dataclass_fields__}),
@@ -144,6 +160,8 @@ def load_profile(tool_name: str) -> ToolProfile:
         water=WaterConfig(**{k: v for k, v in wt.items() if k in WaterConfig.__dataclass_fields__}),
         fill=FillConfig(**{k: v for k, v in fl.items() if k in FillConfig.__dataclass_fields__}),
     )
+    if pass2_raw:
+        profile.water.pass2 = Pass2Config(**{k: v for k, v in pass2_raw.items() if k in Pass2Config.__dataclass_fields__})
 
     # Merge calibration data if saved
     cal = load_calibration()

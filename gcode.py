@@ -435,23 +435,164 @@ def apply_fill(polylines: list[Polyline], fill_config) -> list[Polyline]:
 
 # ── G-code Generation ───────────────────────────────────────────────
 
-def _water_dip_gcode(profile: config.ToolProfile) -> list[str]:
+def _water_dip_gcode(profile: config.ToolProfile, travel_speed: float = None,
+                     safe_z: float = None) -> list[str]:
     """Generate G-code for a water/brush dip + rim scrape sequence."""
     w = profile.water
     lines = []
     dip_z = w.cup_height - w.dip_depth
 
-    safe_z = max(config.SAFE_Z, profile.height.pen_up_z)
+    _safe_z = safe_z if safe_z is not None else max(config.SAFE_Z, profile.height.pen_up_z)
+    _travel = travel_speed if travel_speed is not None else profile.movement.travel_speed
     lines.append(f"; --- Water dip ---")
-    lines.append(f"G1 Z{safe_z:.3f} F{profile.movement.travel_speed:.0f}")
+    lines.append(f"G1 Z{_safe_z:.3f} F{_travel:.0f}")
     lines.append(f"G0 X{w.cup_x:.3f} Y{w.cup_y:.3f}")
     lines.append(f"G1 Z{dip_z:.3f} F500")
     lines.append(f"G4 P{w.dip_time}")
     lines.append(f"G1 Z{w.cup_height:.3f} F500")
     lines.append(f"G1 X{w.cup_x + w.scrape_distance:.3f} F{w.scrape_speed:.0f}")
-    lines.append(f"G1 Z{safe_z:.3f} F500")
+    lines.append(f"G1 Z{_safe_z:.3f} F500")
     lines.append(f"; --- End water dip ---")
     return lines
+
+
+def _emit_stroke_pass(
+    polylines, transform, lines, toolpath,
+    draw_speed, travel_speed, pen_down_z, safe_z,
+    water_cfg=None, profile=None, initial_dip=False, segment_start=0,
+):
+    """Emit G-code for one pass over all polylines.
+
+    Returns updated segment_count.
+    """
+    segment_count = segment_start
+    prev_pos = (0.0, 0.0)
+    cumulative_draw_dist = 0.0
+
+    # Initial water dip if requested (e.g. start of wet pass)
+    if water_cfg and initial_dip and profile:
+        lines.extend(_water_dip_gcode(profile, travel_speed=travel_speed, safe_z=safe_z))
+
+    for pl_idx, polyline in enumerate(polylines):
+        if len(polyline.points) < 2:
+            continue
+
+        lines.append(f"; Stroke {pl_idx + 1}")
+
+        # Water dip check
+        if water_cfg and segment_count > 0 and segment_count % water_cfg.dip_interval == 0 and profile:
+            lines.extend(_water_dip_gcode(profile, travel_speed=travel_speed, safe_z=safe_z))
+
+        # Move to start (pen up) — travel move
+        sx, sy = transform(*polyline.points[0])
+        lines.append(f"G0 X{sx:.3f} Y{sy:.3f} ; Travel to start")
+
+        travel_pts = [[round(prev_pos[0], 2), round(prev_pos[1], 2)], [sx, sy]]
+        toolpath.append({"type": "travel", "points": travel_pts, "layer": polyline.layer})
+        prev_pos = (sx, sy)
+
+        # Pen down
+        lines.append(f"G1 Z{pen_down_z:.3f} F{travel_speed:.0f} ; Pen down")
+
+        # Draw
+        draw_pts = [[sx, sy]]
+        for i in range(1, len(polyline.points)):
+            px, py = transform(*polyline.points[i])
+            lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
+            draw_pts.append([px, py])
+            segment_count += 1
+            prev_pos = (px, py)
+
+        toolpath.append({"type": "draw", "points": draw_pts, "layer": polyline.layer})
+
+        # Pen up
+        lines.append(f"G1 Z{safe_z:.3f} F{travel_speed:.0f} ; Pen up")
+
+    return segment_count
+
+
+def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scaled_h,
+                    scale, eff_ox, eff_oy, eff_w, eff_h, user_scale, user_rotate,
+                    page_offset_x=0.0, page_offset_y=0.0):
+    """Generate two-pass G-code: dry pencil draw then wet brush retrace."""
+    mv = profile.movement
+    ht = profile.height
+    wt = profile.water
+    p2 = wt.pass2
+
+    lines = []
+    toolpath = []
+
+    # Header
+    lines.append("; Pen Plotter G-code — TWO-PASS WATERCOLOR")
+    lines.append(f"; Tool: {profile.name}")
+    lines.append(f"; Original SVG: {svg_w:.1f} x {svg_h:.1f} mm")
+    lines.append(f"; Scaled to: {scaled_w:.1f} x {scaled_h:.1f} mm (scale {scale:.4f})")
+    if user_scale != 1.0:
+        lines.append(f"; User scale: {user_scale:.2f}")
+    if user_rotate != 0.0:
+        lines.append(f"; User rotate: {user_rotate:.1f} deg")
+    lines.append("")
+    lines.append("G28 ; Home all axes")
+    lines.append("G90 ; Absolute positioning")
+
+    pass1_safe_z = max(config.SAFE_Z, ht.pen_up_z)
+    pass2_safe_z = max(config.SAFE_Z, p2.lift_height)
+
+    lines.append(f"G1 Z{pass1_safe_z:.3f} F{mv.travel_speed:.0f} ; Safe travel height")
+    lines.append("")
+
+    # ── PASS 1: Dry pencil draw ──
+    lines.append("; ===== PASS 1: DRY DRAW =====")
+    lines.append("")
+
+    _emit_stroke_pass(
+        polylines, transform, lines, toolpath,
+        draw_speed=mv.draw_speed,
+        travel_speed=mv.travel_speed,
+        pen_down_z=ht.pen_down_z,
+        safe_z=pass1_safe_z,
+        water_cfg=None,       # no water dips in dry pass
+        profile=None,
+        initial_dip=False,
+        segment_start=0,
+    )
+
+    # ── TOOL CHANGE: Park for pencil→brush swap ──
+    lines.append("")
+    lines.append("; ===== TOOL CHANGE: SWAP PENCIL FOR WET BRUSH =====")
+    lines.append("G1 Z{:.3f} F{:.0f} ; Raise for tool swap".format(p2.change_z, mv.travel_speed))
+    lines.append("G1 X{:.3f} Y{:.3f} F{:.0f} ; Park for tool swap".format(p2.change_x, p2.change_y, mv.travel_speed))
+    lines.append("M0 ; PAUSE — Swap pencil for wet brush, then press resume")
+    lines.append("")
+
+    # ── PASS 2: Wet brush retrace ──
+    lines.append("; ===== PASS 2: WET BRUSH =====")
+    lines.append("")
+
+    _emit_stroke_pass(
+        polylines, transform, lines, toolpath,
+        draw_speed=p2.draw_speed,
+        travel_speed=p2.travel_speed,
+        pen_down_z=p2.pen_down_z if p2.pen_down_z != 0.0 else ht.pen_down_z,
+        safe_z=pass2_safe_z,
+        water_cfg=wt,         # periodic water dips
+        profile=profile,
+        initial_dip=True,     # dip brush before first stroke
+        segment_start=0,
+    )
+
+    # Footer
+    lines.append("")
+    lines.append("; Park")
+    lines.append(f"G1 Z{pass2_safe_z:.3f} F{p2.travel_speed:.0f} ; Safe Z")
+    lines.append("G0 X0 Y0 ; Home position")
+    lines.append("M84 ; Disable motors")
+
+    return "\n".join(lines), toolpath, {
+        "effective_area": {"x": round(eff_ox, 1), "y": round(eff_oy, 1),
+                           "width": round(eff_w, 1), "height": round(eff_h, 1)},
+    }
 
 
 def polylines_to_gcode(
@@ -567,6 +708,15 @@ def polylines_to_gcode(
     def transform(px, py):
         return (round(px * scale + offset_x + page_offset_x, 3),
                 round(py * scale + offset_y + page_offset_y, 3))
+
+    # Check for two-pass watercolor mode
+    if wt.enabled and wt.two_pass:
+        return _two_pass_gcode(
+            polylines, transform, profile,
+            svg_w, svg_h, scaled_w, scaled_h, scale,
+            eff_ox, eff_oy, eff_w, eff_h,
+            user_scale, user_rotate, page_offset_x, page_offset_y,
+        )
 
     # 5. Generate G-code + collect toolpath
     lines = []
