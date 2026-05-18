@@ -21,3 +21,9 @@ dip_time = 500
 dip_interval = 50
 blot_x = 180.0
 blot_y = 200.0
+
+[fill]
+enabled = false
+fill_type = "hatch"
+spacing = 2.0
+angle = 45.0

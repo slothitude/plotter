@@ -4,17 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plotter Control</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
     <div class="app-layout">
 
-        <!-- TOP BAR: Connection + Jog Controls -->
+        <!-- TOP BAR -->
         <header class="top-bar">
-            <div class="top-left">
-                <div class="logo-text">PLOTTER<span class="logo-accent">CTRL</span></div>
+            <div class="brand">
+                <svg class="brand-icon" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                <span class="brand-name">PLOTTER<span class="brand-accent">CTRL</span></span>
             </div>
             <div class="top-conn">
                 <select id="port-select" class="input-select">
@@ -47,84 +46,32 @@
             <button id="btn-estop" class="btn-estop-sm">E-STOP</button>
         </header>
 
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Tab Bar -->
-            <nav class="tab-bar">
-                <button class="tab active" data-tab="calibration">
-                    <span class="tab-icon">◎</span> Calibration
-                </button>
-                <button class="tab" data-tab="plot">
-                    <span class="tab-icon">◈</span> Plot
-                </button>
-                <button class="tab" data-tab="settings">
-                    <span class="tab-icon">⚙</span> Settings
-                </button>
+        <!-- MAIN: Side Nav + Content -->
+        <div class="main-content">
+
+            <!-- Side Navigation -->
+            <nav class="side-nav">
+                <div class="nav-item active" data-panel="plot" title="Plot">
+                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                    <span>Plot</span>
+                </div>
+                <div class="nav-item" data-panel="calibration" title="Calibrate">
+                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                    <span>Cal</span>
+                </div>
+                <div class="nav-item" data-panel="settings" title="Settings">
+                    <svg viewBox="0 0 24 24"><path d="M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.04 7.04 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.48.48 0 00.12.61l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.49.37 1.03.7 1.62.94l.36 2.54c.05.24.26.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+                    <span>Set</span>
+                </div>
+                <div class="nav-item" data-panel="log" title="Serial Log">
+                    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
+                    <span>Log</span>
+                </div>
+                <div class="nav-spacer"></div>
             </nav>
 
-            <!-- Tab: Calibration -->
-            <div class="tab-content active" id="tab-calibration">
-                <div class="cal-layout">
-                    <div class="cal-main">
-                        <section class="panel">
-                            <h3 class="panel-title">Tool Calibration</h3>
-                            <p class="cal-desc">Calibrate the pen-down Z height for each tool. The nozzle must just touch the paper.</p>
-
-                            <div class="cal-controls">
-                                <div class="cal-row">
-                                    <label>Active Tool</label>
-                                    <select id="cal-tool" class="input-select">
-                                        <option value="pencil">Pencil</option>
-                                        <option value="pen">Pen</option>
-                                        <option value="watercolor">Watercolor</option>
-                                    </select>
-                                </div>
-                                <div class="cal-actions">
-                                    <button id="btn-cal-start" class="btn btn-primary">Start Calibration</button>
-                                    <button id="btn-cal-test-dot" class="btn btn-outline">Test Dot</button>
-                                </div>
-                            </div>
-
-                            <div class="cal-z-section">
-                                <div class="cal-z-header">
-                                    <span>Current Z Height</span>
-                                    <span class="cal-z-value" id="cal-z-display">--</span>
-                                </div>
-                                <div class="cal-z-buttons">
-                                    <button class="btn btn-z-step" data-delta="-1">▼ 1mm</button>
-                                    <button class="btn btn-z-step" data-delta="-0.1">▼ 0.1mm</button>
-                                    <button class="btn btn-z-step fine" data-delta="-0.01">▼ 0.01mm</button>
-                                    <button class="btn btn-z-step fine" data-delta="0.01">▲ 0.01mm</button>
-                                    <button class="btn btn-z-step" data-delta="0.1">▲ 0.1mm</button>
-                                    <button class="btn btn-z-step" data-delta="1">▲ 1mm</button>
-                                </div>
-                                <button id="btn-cal-save" class="btn btn-primary btn-block">Save Current Z as Pen-Down Height</button>
-                                <div class="cal-offset-section">
-                                    <div class="cal-offset-header">Pen XY Offset</div>
-                                    <p class="cal-desc">Home the printer, then jog the pen to the corner of your paper. The pen's current X/Y position IS the offset.</p>
-                                    <div class="cal-offset-row">
-                                        <span class="cal-offset-val">X: <strong id="cal-ox">--</strong></span>
-                                        <span class="cal-offset-val">Y: <strong id="cal-oy">--</strong></span>
-                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Current XY as Offset</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
-
-                    <div class="cal-saved">
-                        <section class="panel">
-                            <h3 class="panel-title">Saved Calibrations</h3>
-                            <div id="cal-saved-list" class="cal-saved-list">
-                                <div class="cal-saved-item">No calibrations saved yet.</div>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab: Plot -->
-            <div class="tab-content" id="tab-plot">
+            <!-- Panel: Plot -->
+            <div class="panel-content active" id="panel-plot">
                 <div class="plot-layout">
                     <div class="plot-left">
                         <!-- Upload -->
@@ -147,9 +94,42 @@
                                 <span class="panel-badge" id="preview-info"></span>
                             </h3>
                             <div class="canvas-container">
+                                <div class="canvas-overlay">
+                                    <button class="btn-overlay active" id="btn-show-draw" title="Show draws">✎</button>
+                                    <button class="btn-overlay" id="btn-show-travel" title="Show travel moves">⋯</button>
+                                    <button class="btn-overlay active" id="btn-show-grid" title="Show grid">#</button>
+                                    <button class="btn-overlay" id="btn-zoom-fit" title="Zoom to fit">⊞</button>
+                                </div>
                                 <canvas id="preview-canvas" width="500" height="500"></canvas>
+                                <div class="canvas-info">
+                                    <div>
+                                        <span class="stat">Strokes: <span class="stat-val" id="stat-strokes">--</span></span>
+                                        <span class="stat">Draw: <span class="stat-val" id="stat-draw">--</span></span>
+                                        <span class="stat">Travel: <span class="stat-val" id="stat-travel">--</span></span>
+                                        <span class="stat">Time: <span class="stat-val" id="stat-time">--</span></span>
+                                    </div>
+                                    <div>
+                                        Cursor: <span id="cursor-pos">--</span>
+                                    </div>
+                                </div>
                             </div>
                         </section>
+
+                        <!-- G-code Drawer -->
+                        <div class="gcode-drawer" id="gcode-drawer">
+                            <div class="gcode-drawer-header" id="gcode-drawer-toggle">
+                                <span style="font-family:var(--font-display);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-2)">
+                                    G-code <span class="panel-badge" id="gcode-lines"></span>
+                                </span>
+                                <span class="gcode-drawer-toggle">▼</span>
+                            </div>
+                            <div class="gcode-drawer-body">
+                                <pre id="gcode-preview" class="gcode-preview">No G-code generated yet.</pre>
+                                <div class="gcode-actions">
+                                    <button id="btn-download-gcode" class="btn btn-outline btn-sm" disabled>Download .gcode</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="plot-right">
@@ -184,44 +164,64 @@
                         <!-- Tool & Convert -->
                         <section class="panel">
                             <h3 class="panel-title">Convert</h3>
-                            <div class="convert-row">
-                                <label>Tool</label>
-                                <select id="plot-tool" class="input-select">
-                                    <option value="pencil">Pencil</option>
-                                    <option value="pen">Pen</option>
-                                    <option value="watercolor">Watercolor</option>
-                                </select>
+                            <div class="tool-tabs">
+                                <button class="tool-tab active" data-tool="pencil">Pencil</button>
+                                <button class="tool-tab" data-tool="pen">Pen</button>
+                                <button class="tool-tab" data-tool="watercolor">Watercolor</button>
                             </div>
-                            <button id="btn-convert" class="btn btn-primary btn-block" disabled>Convert SVG → G-code</button>
-                            <div class="test-section">
-                                <div class="test-header">Test Patterns <span class="unit">size</span></div>
-                                <div class="test-size-row">
-                                    <input type="number" id="test-size" class="input-field" value="80" step="5" min="10" max="200">
+
+                            <!-- Transform Controls -->
+                            <div class="transform-block">
+                                <div class="transform-row">
+                                    <span class="transform-label">Scale</span>
+                                    <input type="range" class="transform-slider" id="tf-scale" min="0.1" max="3" step="0.1" value="1">
+                                    <span class="transform-val" id="tf-scale-val">1.0</span>
                                 </div>
-                                <div class="test-buttons">
-                                    <button id="btn-test-circle" class="btn btn-outline btn-sm">Circle</button>
-                                    <button id="btn-test-square" class="btn btn-outline btn-sm">Square</button>
-                                    <button id="btn-test-text" class="btn btn-outline btn-sm">Text</button>
-                                    <button id="btn-test-grid" class="btn btn-outline btn-sm">Grid</button>
-                                    <button id="btn-test-star" class="btn btn-outline btn-sm">Star</button>
+                                <div class="transform-row">
+                                    <span class="transform-label">Rotate</span>
+                                    <input type="range" class="transform-slider" id="tf-rotate" min="0" max="360" step="1" value="0">
+                                    <span class="transform-val" id="tf-rotate-val">0°</span>
                                 </div>
-                                <div class="test-text-input hidden">
-                                    <input type="text" id="test-text-value" class="input-field" placeholder="Enter text..." value="HELLO">
-                                    <button id="btn-test-text-go" class="btn btn-primary btn-sm">Draw</button>
+                                <div class="transform-row">
+                                    <span class="transform-label">Offset X</span>
+                                    <input type="range" class="transform-slider" id="tf-offset-x" min="-100" max="100" step="1" value="0">
+                                    <span class="transform-val" id="tf-offset-x-val">0</span>
                                 </div>
+                                <div class="transform-row">
+                                    <span class="transform-label">Offset Y</span>
+                                    <input type="range" class="transform-slider" id="tf-offset-y" min="-100" max="100" step="1" value="0">
+                                    <span class="transform-val" id="tf-offset-y-val">0</span>
+                                </div>
+                                <div class="transform-checks">
+                                    <label class="check-label"><input type="checkbox" id="tf-mirror-x"> Mirror X</label>
+                                    <label class="check-label"><input type="checkbox" id="tf-mirror-y"> Mirror Y</label>
+                                    <label class="check-label"><input type="checkbox" id="tf-optimize" checked> Optimize</label>
+                                    <label class="check-label"><input type="checkbox" id="tf-simplify"> Simplify</label>
+                                </div>
+                                <button id="btn-reset-transforms" class="btn btn-sm btn-reset">Reset</button>
                             </div>
+
+                            <button id="btn-convert" class="btn btn-primary btn-block" disabled style="margin-top:12px">Convert SVG → G-code</button>
                             <div id="convert-result" class="convert-result hidden"></div>
                         </section>
 
-                        <!-- G-code Preview -->
+                        <!-- Test Patterns -->
                         <section class="panel">
-                            <h3 class="panel-title">
-                                G-code
-                                <span class="panel-badge" id="gcode-lines"></span>
-                            </h3>
-                            <pre id="gcode-preview" class="gcode-preview">No G-code generated yet.</pre>
-                            <div class="gcode-actions">
-                                <button id="btn-download-gcode" class="btn btn-outline btn-sm" disabled>Download .gcode</button>
+                            <h3 class="panel-title">Test Patterns <span class="unit">size</span></h3>
+                            <div class="convert-row">
+                                <input type="number" id="test-size" class="input-field" value="80" step="5" min="10" max="200">
+                            </div>
+                            <div class="test-grid">
+                                <button class="btn btn-outline btn-sm" data-pattern="circle">Circle</button>
+                                <button class="btn btn-outline btn-sm" data-pattern="square">Square</button>
+                                <button class="btn btn-outline btn-sm" data-pattern="grid">Grid</button>
+                                <button class="btn btn-outline btn-sm" data-pattern="star">Star</button>
+                                <button class="btn btn-outline btn-sm" data-pattern="spiral">Spiral</button>
+                                <button class="btn btn-outline btn-sm" data-pattern="crosshair">Crosshair</button>
+                            </div>
+                            <div class="test-text-row">
+                                <input type="text" id="test-text-value" class="input-field" placeholder="Enter text..." value="Hello World">
+                                <button id="btn-test-text" class="btn btn-primary btn-sm">Text</button>
                             </div>
                         </section>
 
@@ -240,15 +240,86 @@
                 </div>
             </div>
 
-            <!-- Tab: Settings -->
-            <div class="tab-content" id="tab-settings">
+            <!-- Panel: Calibration -->
+            <div class="panel-content" id="panel-calibration">
+                <div class="cal-layout">
+                    <div class="cal-main">
+                        <section class="panel">
+                            <h3 class="panel-title">Tool Calibration</h3>
+                            <p class="cal-desc">Calibrate the pen-down Z height for each tool. The nozzle must just touch the paper.</p>
+                            <div class="cal-controls">
+                                <div class="cal-row">
+                                    <label>Active Tool</label>
+                                    <select id="cal-tool" class="input-select">
+                                        <option value="pencil">Pencil</option>
+                                        <option value="pen">Pen</option>
+                                        <option value="watercolor">Watercolor</option>
+                                    </select>
+                                </div>
+                                <div class="cal-actions">
+                                    <button id="btn-cal-start" class="btn btn-primary">Start Calibration</button>
+                                    <button id="btn-cal-pen-loaded" class="btn btn-primary">Pen Loaded</button>
+                                    <button id="btn-cal-test-dot" class="btn btn-outline">Test Dot</button>
+                                </div>
+                                <div class="cal-bed-level">
+                                    <h4 class="cal-bed-level-title">Bed Leveling</h4>
+                                    <button id="btn-bed-level" class="btn btn-primary">Start Bed Level</button>
+                                    <div id="bed-level-controls" class="cal-bed-controls hidden">
+                                        <span id="bed-level-status" class="cal-bed-status">Corner 1/4: Front-Left</span>
+                                        <div class="cal-bed-actions">
+                                            <button id="btn-bed-repeat" class="btn btn-outline btn-sm">Repeat</button>
+                                            <button id="btn-bed-next" class="btn btn-primary btn-sm">Next Corner</button>
+                                            <button id="btn-bed-stop" class="btn btn-sm btn-bed-stop">Stop</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="cal-z-section">
+                                <div class="cal-z-header">
+                                    <span>Current Z Height</span>
+                                    <span class="cal-z-value" id="cal-z-display">--</span>
+                                </div>
+                                <div class="cal-z-buttons">
+                                    <button class="btn btn-z-step" data-delta="-1">▼ 1mm</button>
+                                    <button class="btn btn-z-step" data-delta="-0.1">▼ 0.1mm</button>
+                                    <button class="btn btn-z-step fine" data-delta="-0.01">▼ 0.01mm</button>
+                                    <button class="btn btn-z-step fine" data-delta="0.01">▲ 0.01mm</button>
+                                    <button class="btn btn-z-step" data-delta="0.1">▲ 0.1mm</button>
+                                    <button class="btn btn-z-step" data-delta="1">▲ 1mm</button>
+                                </div>
+                                <button id="btn-cal-save" class="btn btn-primary btn-block">Save Current Z as Pen-Down Height</button>
+                                <div class="cal-offset-section">
+                                    <div class="cal-offset-header">Pen XY Offset</div>
+                                    <p class="cal-desc">Jog the pen until it is centered over bed center (110, 110), then save. The hotend reading at that position is the offset.</p>
+                                    <div class="cal-offset-row">
+                                        <span class="cal-offset-val">X: <strong id="cal-ox">--</strong></span>
+                                        <span class="cal-offset-val">Y: <strong id="cal-oy">--</strong></span>
+                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Current XY as Offset</button>
+                                    </div>
+                                    <div id="effective-area-info" class="cal-desc" style="display:none; margin-top:8px; color:#aaa;"></div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="cal-saved">
+                        <section class="panel">
+                            <h3 class="panel-title">Saved Calibrations</h3>
+                            <div id="cal-saved-list" class="cal-saved-list">
+                                <div class="cal-saved-item">No calibrations saved yet.</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel: Settings -->
+            <div class="panel-content" id="panel-settings">
                 <div class="settings-layout">
                     <div class="settings-tabs">
                         <button class="settings-tab active" data-settings-tool="pencil">Pencil</button>
                         <button class="settings-tab" data-settings-tool="pen">Pen</button>
                         <button class="settings-tab" data-settings-tool="watercolor">Watercolor</button>
                     </div>
-
                     <div class="settings-panels">
                         <section class="panel">
                             <h3 class="panel-title">Movement</h3>
@@ -267,7 +338,19 @@
                                 </div>
                             </div>
                         </section>
-
+                        <section class="panel">
+                            <h3 class="panel-title">Graphite Wear</h3>
+                            <div class="settings-grid">
+                                <div class="setting-field">
+                                    <label>Wear Rate <span class="unit">mm/m</span></label>
+                                    <input type="number" id="set-wear-rate" class="input-field" step="0.01" min="0">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Max Depth <span class="unit">mm</span></label>
+                                    <input type="number" id="set-wear-depth" class="input-field" step="0.1" min="0">
+                                </div>
+                            </div>
+                        </section>
                         <section class="panel" id="water-settings">
                             <h3 class="panel-title">Water / Brush</h3>
                             <div class="settings-grid">
@@ -315,7 +398,32 @@
                                 </div>
                             </div>
                         </section>
-
+                        <section class="panel" id="fill-settings">
+                            <h3 class="panel-title">Fill / Hatch</h3>
+                            <div class="settings-grid">
+                                <div class="setting-field full-width">
+                                    <label class="toggle-label">
+                                        <input type="checkbox" id="set-fill-enabled">
+                                        <span>Fill enabled</span>
+                                    </label>
+                                </div>
+                                <div class="setting-field">
+                                    <label>Fill Type</label>
+                                    <select id="set-fill-type" class="input-select">
+                                        <option value="hatch">Hatch</option>
+                                        <option value="crosshatch">Crosshatch</option>
+                                    </select>
+                                </div>
+                                <div class="setting-field">
+                                    <label>Spacing <span class="unit">mm</span></label>
+                                    <input type="number" id="set-fill-spacing" class="input-field" step="0.5" min="0.5">
+                                </div>
+                                <div class="setting-field">
+                                    <label>Angle <span class="unit">deg</span></label>
+                                    <input type="number" id="set-fill-angle" class="input-field" step="5" min="0" max="360">
+                                </div>
+                            </div>
+                        </section>
                         <div class="settings-actions">
                             <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
                             <span id="settings-saved-msg" class="settings-saved-msg hidden">Saved.</span>
@@ -323,9 +431,33 @@
                     </div>
                 </div>
             </div>
-        </main>
+
+            <!-- Panel: Log -->
+            <div class="panel-content" id="panel-log">
+                <div class="log-layout">
+                    <section class="panel">
+                        <h3 class="panel-title">Serial Log</h3>
+                        <div class="log-output" id="serial-log">
+                            <div class="log-line info">
+                                <span class="log-ts">--:--:--</span>
+                                <span class="log-dir">&gt;</span>
+                                <span class="log-msg">Connect to a printer to see serial output.</span>
+                            </div>
+                        </div>
+                        <div class="log-input-row">
+                            <input type="text" id="serial-cmd" class="input-field" placeholder="Send G-code command (e.g. G28)">
+                            <button id="btn-send-cmd" class="btn btn-primary btn-sm">Send</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+
+        </div>
     </div>
 
-    <script src="app.js?v=4"></script>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="app.js?v=5"></script>
 </body>
 </html>

@@ -18,6 +18,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 
 PRINTER_BED_X = 220.0  # mm
 PRINTER_BED_Y = 220.0  # mm
+SAFE_Z = 20.0           # Minimum Z height for all non-drawing moves (travel)
 
 
 # ── Page size presets ────────────────────────────────────────────────
@@ -63,6 +64,8 @@ class MovementConfig:
     draw_speed: float = 1500.0    # mm/min
     travel_speed: float = 3000.0  # mm/min
     lift_height: float = 5.0      # mm
+    wear_rate: float = 0.0        # mm Z per meter drawn (0 = disabled)
+    max_wear_depth: float = 0.0   # max Z lowering in mm (0 = uncapped)
 
 
 @dataclass
@@ -88,11 +91,20 @@ class WaterConfig:
 
 
 @dataclass
+class FillConfig:
+    enabled: bool = False
+    fill_type: str = "hatch"       # "hatch" or "crosshatch"
+    spacing: float = 2.0           # mm between lines
+    angle: float = 45.0            # degrees from horizontal
+
+
+@dataclass
 class ToolProfile:
     name: str = "Pencil"
     movement: MovementConfig = field(default_factory=MovementConfig)
     height: HeightConfig = field(default_factory=HeightConfig)
     water: WaterConfig = field(default_factory=WaterConfig)
+    fill: FillConfig = field(default_factory=FillConfig)
 
     def recalc_pen_up(self):
         """Recalculate pen_up_z from pen_down_z + lift_height."""
@@ -123,12 +135,14 @@ def load_profile(tool_name: str) -> ToolProfile:
     mv = raw.get("movement", {})
     ht = raw.get("height", {})
     wt = raw.get("water", {})
+    fl = raw.get("fill", {})
 
     profile = ToolProfile(
         name=tool.get("name", tool_name.title()),
         movement=MovementConfig(**{k: v for k, v in mv.items() if k in MovementConfig.__dataclass_fields__}),
         height=HeightConfig(**{k: v for k, v in ht.items() if k in HeightConfig.__dataclass_fields__}),
         water=WaterConfig(**{k: v for k, v in wt.items() if k in WaterConfig.__dataclass_fields__}),
+        fill=FillConfig(**{k: v for k, v in fl.items() if k in FillConfig.__dataclass_fields__}),
     )
 
     # Merge calibration data if saved
@@ -152,6 +166,7 @@ def save_profile(tool_name: str, profile: ToolProfile):
         "movement": asdict(profile.movement),
         "height": asdict(profile.height),
         "water": asdict(profile.water),
+        "fill": asdict(profile.fill),
     }
     toml.dump(data, path)
 

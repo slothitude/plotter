@@ -1,5 +1,6 @@
 """Pen Plotter — Flask web application."""
 
+import math
 import os
 import uuid
 from pathlib import Path
@@ -16,6 +17,26 @@ sock = Sock(app)
 
 # Global state
 serial = serial_conn.SerialConnection()
+SERIAL_PORT_FILE = Path(__file__).parent / "serial_port.txt"
+
+
+def _ensure_connected():
+    """Auto-connect to the saved serial port if not already connected."""
+    if serial.is_connected:
+        return True
+    port = SERIAL_PORT_FILE.read_text().strip() if SERIAL_PORT_FILE.exists() else None
+    if not port:
+        # Try first available port
+        ports = serial_conn.SerialConnection.list_ports()
+        if ports:
+            port = ports[0]["port"]
+    if port:
+        try:
+            serial.connect(port)
+            return True
+        except Exception:
+            return False
+    return False
 uploaded_svgs: dict[str, str] = {}  # id -> file path
 generated_gcode: dict[str, str] = {}  # id -> gcode string
 ws_clients: list = []
@@ -79,6 +100,7 @@ def serial_connect():
         return jsonify({"error": "port required"}), 400
     try:
         serial.connect(port, baudrate)
+        SERIAL_PORT_FILE.write_text(port)
         return jsonify({"ok": True, "port": port})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -105,7 +127,42 @@ def get_status():
     })
 
 
+@app.route("/api/send-command", methods=["POST"])
+def send_command():
+    """Send a raw G-code command and return the response."""
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+    data = request.json or {}
+    command = data.get("command", "").strip()
+    if not command:
+        return jsonify({"error": "command required"}), 400
+    try:
+        serial.send_command(command)
+        return jsonify({"ok": True, "command": command})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Upload & Convert ────────────────────────────────────────────────
+
+def _get_transform_params(data: dict) -> dict:
+    """Extract transform parameters from request data."""
+    return {
+        "optimize": bool(data.get("optimize", True)),
+        "simplify": bool(data.get("simplify", False)),
+        "simplify_tolerance": float(data.get("simplify_tolerance", 0.1)),
+        "user_scale": float(data.get("scale", 1.0)),
+        "user_rotate": float(data.get("rotate", 0.0)),
+        "user_translate_x": float(data.get("translate_x", 0.0)),
+        "user_translate_y": float(data.get("translate_y", 0.0)),
+        "mirror_x": bool(data.get("mirror_x", False)),
+        "mirror_y": bool(data.get("mirror_y", False)),
+        "bed_x": float(data.get("page_width", config.PRINTER_BED_X)),
+        "bed_y": float(data.get("page_height", config.PRINTER_BED_Y)),
+        "page_offset_x": float(data.get("page_offset_x", 0)),
+        "page_offset_y": float(data.get("page_offset_y", 0)),
+    }
+
 
 @app.route("/api/upload", methods=["POST"])
 def upload_svg():
@@ -142,17 +199,12 @@ def convert_svg():
     if file_id not in uploaded_svgs:
         return jsonify({"error": "SVG not found — upload first"}), 404
 
-    page_width = float(data.get("page_width", config.PRINTER_BED_X))
-    page_height = float(data.get("page_height", config.PRINTER_BED_Y))
-    page_offset_x = float(data.get("page_offset_x", 0))
-    page_offset_y = float(data.get("page_offset_y", 0))
+    transform_kwargs = _get_transform_params(data)
 
     try:
-        gc, polylines = gcode.svg_to_gcode(uploaded_svgs[file_id], tool_name)
-        # Regenerate G-code with page dimensions
-        profile = config.load_profile(tool_name)
-        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height,
-                                      page_offset_x=page_offset_x, page_offset_y=page_offset_y)
+        gc, polylines, toolpath, stats, meta = gcode.svg_to_gcode(
+            uploaded_svgs[file_id], tool_name, **transform_kwargs
+        )
         generated_gcode[file_id] = gc
 
         # Save G-code file
@@ -160,6 +212,7 @@ def convert_svg():
         with open(gcode_path, "w") as f:
             f.write(gc)
 
+        profile = config.load_profile(tool_name)
         preview = []
         for pl in polylines:
             preview.append([(round(p[0], 2), round(p[1], 2)) for p in pl.points])
@@ -171,6 +224,18 @@ def convert_svg():
             "gcode_file": f"/api/download/{file_id}",
             "line_count": line_count,
             "polylines": preview,
+            "toolpath": toolpath,
+            "pen_offset_x": profile.height.offset_x,
+            "pen_offset_y": profile.height.offset_y,
+            "effective_area": meta.get("effective_area"),
+            "stats": {
+                "stroke_count": stats.stroke_count,
+                "point_count": stats.point_count,
+                "draw_distance_mm": stats.draw_distance_mm,
+                "travel_distance_mm": stats.travel_distance_mm,
+                "estimated_time_s": stats.estimated_time_s,
+                "bounds": stats.bounds,
+            },
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -179,7 +244,6 @@ def convert_svg():
 @app.route("/api/test-pattern", methods=["POST"])
 def test_pattern():
     """Generate a test SVG pattern."""
-    import math
     data = request.json or {}
     pattern = data.get("pattern", "circle")
     size = float(data.get("size", 80))
@@ -217,6 +281,29 @@ def test_pattern():
         pts.append(pts[0])
         svg_parts.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="black"/>')
 
+    elif pattern == "spiral":
+        cx, cy = 50, 50
+        pts = []
+        turns = 3
+        n_pts = 128
+        for i in range(n_pts + 1):
+            t = i / n_pts
+            angle = turns * 2 * math.pi * t
+            r = (size / 2) * t
+            pts.append(f"{cx + r * math.cos(angle)},{cy + r * math.sin(angle)}")
+        svg_parts.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="black"/>')
+
+    elif pattern == "crosshair":
+        cx, cy = 50, 50
+        r = size / 2
+        # Cross lines
+        svg_parts.append(f'<line x1="{cx - r}" y1="{cy}" x2="{cx + r}" y2="{cy}" stroke="black"/>')
+        svg_parts.append(f'<line x1="{cx}" y1="{cy - r}" x2="{cx}" y2="{cy + r}" stroke="black"/>')
+        # Small circle at center
+        cr = size / 10
+        cpts = " ".join(f"{cx + cr * math.cos(2*math.pi*i/32)},{cy + cr * math.sin(2*math.pi*i/32)}" for i in range(33))
+        svg_parts.append(f'<polyline points="{cpts}" fill="none" stroke="black"/>')
+
     elif pattern == "text":
         text = data.get("text", "HELLO")
         page_width = float(data.get("page_width", config.PRINTER_BED_X))
@@ -225,18 +312,30 @@ def test_pattern():
         page_offset_y = float(data.get("page_offset_y", 0))
         scale = 2.0
         spacing = 2.0
-        # Calculate max_width: page width minus 20mm margin, converted to font units
-        max_width = (page_width - 20) / 1  # already in mm = scaled units
+        max_width = (page_width - 20) / 1
         # Bypass SVG — generate polylines directly from Hershey font
         import font
         strokes = font.text_to_strokes(text, x=10, y=40, scale=scale, spacing=spacing, max_width=max_width)
         polylines = [gcode.Polyline(points=s) for s in strokes if len(s) >= 2]
-        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
-        # Generate G-code directly from polylines
+
         tool = data.get("tool", "pencil")
+        transform_kwargs = _get_transform_params(data)
         profile = config.load_profile(tool)
-        gc = gcode.polylines_to_gcode(polylines, profile, bed_x=page_width, bed_y=page_height,
-                                      page_offset_x=page_offset_x, page_offset_y=page_offset_y)
+        gc, toolpath_data, meta = gcode.polylines_to_gcode(polylines, profile, **transform_kwargs)
+
+        # Compute stats
+        travel_segs = []
+        for seg in toolpath_data:
+            if seg["type"] == "travel" and len(seg["points"]) >= 2:
+                travel_segs.append((tuple(seg["points"][0]), tuple(seg["points"][-1])))
+        preview_polylines = []
+        for seg in toolpath_data:
+            if seg["type"] == "draw" and len(seg["points"]) >= 2:
+                preview_polylines.append(gcode.Polyline(points=[tuple(p) for p in seg["points"]]))
+        stats = gcode.compute_stats(preview_polylines, travel_segs, profile.movement.draw_speed, profile.movement.travel_speed)
+
+        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in preview_polylines]
+
         file_id = uuid.uuid4().hex[:8]
         generated_gcode[file_id] = gc
         gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
@@ -246,11 +345,23 @@ def test_pattern():
         return jsonify({
             "id": file_id,
             "polylines": preview,
-            "stroke_count": len(polylines),
+            "stroke_count": len(preview_polylines),
             "has_gcode": True,
             "gcode_preview": gc[:2000],
             "gcode_file": f"/api/download/{file_id}",
             "line_count": line_count,
+            "toolpath": toolpath_data,
+            "pen_offset_x": profile.height.offset_x,
+            "pen_offset_y": profile.height.offset_y,
+            "effective_area": meta.get("effective_area"),
+            "stats": {
+                "stroke_count": stats.stroke_count,
+                "point_count": stats.point_count,
+                "draw_distance_mm": stats.draw_distance_mm,
+                "travel_distance_mm": stats.travel_distance_mm,
+                "estimated_time_s": stats.estimated_time_s,
+                "bounds": stats.bounds,
+            },
         })
 
     svg_parts.append('</svg>')
@@ -264,10 +375,49 @@ def test_pattern():
         f.write(svg_content)
     uploaded_svgs[file_id] = str(out_path)
 
-    # Parse for preview
-    polylines = gcode.parse_svg(str(out_path))
-    preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
-    return jsonify({"id": file_id, "polylines": preview, "stroke_count": len(polylines)})
+    # For geometric patterns, also generate G-code with transforms
+    tool = data.get("tool", "pencil")
+    transform_kwargs = _get_transform_params(data)
+
+    try:
+        gc, polylines, toolpath_data, stats, meta = gcode.svg_to_gcode(
+            str(out_path), tool, **transform_kwargs
+        )
+        generated_gcode[file_id] = gc
+        gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
+        with open(gcode_path, "w") as f:
+            f.write(gc)
+
+        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
+        line_count = len([l for l in gc.splitlines() if l.strip() and not l.strip().startswith(";")])
+
+        profile = config.load_profile(tool)
+        return jsonify({
+            "id": file_id,
+            "polylines": preview,
+            "stroke_count": len(polylines),
+            "has_gcode": True,
+            "gcode_preview": gc[:2000],
+            "gcode_file": f"/api/download/{file_id}",
+            "line_count": line_count,
+            "toolpath": toolpath_data,
+            "pen_offset_x": profile.height.offset_x,
+            "pen_offset_y": profile.height.offset_y,
+            "effective_area": meta.get("effective_area"),
+            "stats": {
+                "stroke_count": stats.stroke_count,
+                "point_count": stats.point_count,
+                "draw_distance_mm": stats.draw_distance_mm,
+                "travel_distance_mm": stats.travel_distance_mm,
+                "estimated_time_s": stats.estimated_time_s,
+                "bounds": stats.bounds,
+            },
+        })
+    except Exception as e:
+        # Fallback: just return preview without gcode
+        polylines = gcode.parse_svg(str(out_path))
+        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
+        return jsonify({"id": file_id, "polylines": preview, "stroke_count": len(polylines), "error": str(e)})
 
 
 @app.route("/api/download/<file_id>")
@@ -287,7 +437,7 @@ def start_print():
     if file_id not in generated_gcode:
         return jsonify({"error": "G-code not found — convert first"}), 404
 
-    if not serial.is_connected:
+    if not _ensure_connected():
         return jsonify({"error": "Printer not connected"}), 400
 
     try:
@@ -322,6 +472,12 @@ def jog():
         return jsonify({"error": "Axis must be X, Y, or Z"}), 400
 
     try:
+        if axis in ("X", "Y"):
+            pos = serial.get_position()
+            current_z = float(pos.get("Z", 0))
+            if current_z < config.SAFE_Z:
+                serial.send_command(f"G90 ; Absolute positioning")
+                serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F1500 ; Raise to safe travel height")
         serial.send_command(f"G91 ; Relative positioning")
         serial.send_command(f"G1 {axis}{distance:.3f} F{speed}")
         serial.send_command(f"G90 ; Absolute positioning")
@@ -333,10 +489,14 @@ def jog():
 
 @app.route("/api/home", methods=["POST"])
 def home():
+    """Park at water cup position (origin) instead of full endstop home."""
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     try:
-        serial.send_command("G28")
+        serial.send_command("G28")                                    # home to establish position
+        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # raise to safe
+        serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to water cup
+        serial.send_command("G1 Z0.000 F300")                         # lower to rest
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
@@ -344,6 +504,38 @@ def home():
 
 
 # ── Calibration ──────────────────────────────────────────────────────
+
+@app.route("/api/calibration/start", methods=["POST"])
+def calibration_start():
+    """Move to calibration position: home, then Z20 X110 Y110 for pen loading."""
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+    try:
+        serial.send_command("G28 ; Home all axes")
+        serial.send_command("G90 ; Absolute positioning")
+        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; Raise Z first")
+        serial.send_command("G1 X110.000 Y110.000 F3000 ; Move to center")
+        serial.send_command("G1 Z20.000 F500 ; Lower to pen-load height")
+        pos = serial.get_position()
+        return jsonify({"ok": True, "position": pos})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/calibration/pen-loaded", methods=["POST"])
+def calibration_pen_loaded():
+    """Raise Z by 5mm after pen is loaded."""
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+    try:
+        serial.send_command("G91 ; Relative positioning")
+        serial.send_command("G1 Z5.000 F500 ; Raise 5mm for clearance")
+        serial.send_command("G90 ; Absolute positioning")
+        pos = serial.get_position()
+        return jsonify({"ok": True, "position": pos})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/calibration", methods=["GET"])
 def get_calibration():
@@ -417,6 +609,93 @@ def test_dot():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Bed Leveling ─────────────────────────────────────────────────────
+
+bed_level_state: dict | None = None
+
+CORNER_LABELS = ["Front-Left", "Front-Right", "Back-Right", "Back-Left"]
+ARM = 15.0  # mm length of each L-shape arm
+
+
+@app.route("/api/bed-level", methods=["POST"])
+def bed_level():
+    global bed_level_state
+
+    if not serial.is_connected:
+        return jsonify({"error": "Printer not connected"}), 400
+
+    data = request.json or {}
+    action = data.get("action", "start")
+    tool = data.get("tool", "pencil")
+
+    try:
+        profile = config.load_profile(tool)
+    except FileNotFoundError:
+        return jsonify({"error": f"Profile '{tool}' not found"}), 404
+
+    pen_down_z = profile.height.pen_down_z
+    safe_z = config.SAFE_Z
+
+    if action == "start":
+        page = config.load_page_size()
+        w = page["width"]
+        h = page["height"]
+        ox = page.get("offset_x", 0)
+        oy = page.get("offset_y", 0)
+
+        corners = [
+            (ox, oy, ox + ARM, oy, ox, oy + ARM),           # FL: right → up
+            (ox + w, oy, ox + w - ARM, oy, ox + w, oy + ARM),  # FR: left → up
+            (ox + w, oy + h, ox + w - ARM, oy + h, ox + w, oy + h - ARM),  # BR: left → down
+            (ox, oy + h, ox + ARM, oy + h, ox, oy + h - ARM),  # BL: right → down
+        ]
+
+        bed_level_state = {"corner": 0, "corners": corners}
+        serial.send_command(f"G90")
+        _draw_l_shape(corners[0], pen_down_z, safe_z)
+        return jsonify({"corner": 0, "label": CORNER_LABELS[0]})
+
+    elif action == "next":
+        if bed_level_state is None:
+            return jsonify({"error": "No bed level session — start first"}), 400
+        bed_level_state["corner"] += 1
+        idx = bed_level_state["corner"]
+        if idx > 3:
+            serial.send_command(f"G1 Z{safe_z:.3f} F300")
+            bed_level_state = None
+            return jsonify({"done": True})
+        serial.send_command(f"G90")
+        _draw_l_shape(bed_level_state["corners"][idx], pen_down_z, safe_z)
+        return jsonify({"corner": idx, "label": CORNER_LABELS[idx]})
+
+    elif action == "repeat":
+        if bed_level_state is None:
+            return jsonify({"error": "No bed level session — start first"}), 400
+        idx = bed_level_state["corner"]
+        serial.send_command(f"G90")
+        _draw_l_shape(bed_level_state["corners"][idx], pen_down_z, safe_z)
+        return jsonify({"corner": idx, "label": CORNER_LABELS[idx]})
+
+    elif action == "stop":
+        serial.send_command(f"G1 Z{safe_z:.3f} F300")
+        serial.send_command("G28")
+        bed_level_state = None
+        return jsonify({"ok": True})
+
+    return jsonify({"error": f"Unknown action: {action}"}), 400
+
+
+def _draw_l_shape(corner, pen_down_z, safe_z):
+    """Draw an L-shape at a corner. corner = (cx, cy, arm1_ex, arm1_ey, arm2_ex, arm2_ey)."""
+    cx, cy, ax1, ay1, ax2, ay2 = corner
+    serial.send_command(f"G1 Z{safe_z:.3f} F300")
+    serial.send_command(f"G0 X{cx:.3f} Y{cy:.3f} F3000")
+    serial.send_command(f"G1 Z{pen_down_z:.3f} F300")
+    serial.send_command(f"G1 X{ax1:.3f} Y{ay1:.3f} F500")
+    serial.send_command(f"G1 X{ax2:.3f} Y{ay2:.3f} F500")
+    serial.send_command(f"G1 Z{safe_z:.3f} F300")
+
+
 # ── Settings ─────────────────────────────────────────────────────────
 
 @app.route("/api/settings/<tool_name>", methods=["GET"])
@@ -430,6 +709,8 @@ def get_settings(tool_name):
                 "draw_speed": profile.movement.draw_speed,
                 "travel_speed": profile.movement.travel_speed,
                 "lift_height": profile.movement.lift_height,
+                "wear_rate": profile.movement.wear_rate,
+                "max_wear_depth": profile.movement.max_wear_depth,
             },
             "height": {
                 "pen_down_z": profile.height.pen_down_z,
@@ -446,6 +727,12 @@ def get_settings(tool_name):
                 "dip_interval": profile.water.dip_interval,
                 "blot_x": profile.water.blot_x,
                 "blot_y": profile.water.blot_y,
+            },
+            "fill": {
+                "enabled": profile.fill.enabled,
+                "fill_type": profile.fill.fill_type,
+                "spacing": profile.fill.spacing,
+                "angle": profile.fill.angle,
             },
         })
     except FileNotFoundError:
@@ -470,6 +757,12 @@ def save_settings(tool_name):
                 profile.water.enabled = bool(v)
             elif hasattr(profile.water, k):
                 setattr(profile.water, k, float(v) if isinstance(v, (int, float)) else v)
+    if "fill" in data:
+        for k, v in data["fill"].items():
+            if k == "enabled":
+                profile.fill.enabled = bool(v)
+            elif hasattr(profile.fill, k):
+                setattr(profile.fill, k, float(v) if isinstance(v, (int, float)) else v)
 
     profile.recalc_pen_up()
     config.save_profile(tool_name, profile)

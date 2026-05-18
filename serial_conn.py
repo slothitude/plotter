@@ -103,6 +103,12 @@ class SerialConnection:
             self._serial.flush()
         return ""
 
+    def _send_direct(self, cmd: str):
+        """Send a command using the existing lock (for use after _send_loop)."""
+        with self._lock:
+            self._serial.write((cmd.strip() + "\n").encode())
+            self._serial.flush()
+
     def get_position(self) -> dict:
         """Send M114, retry up to 3 times if firmware doesn't flush."""
         if not self.is_connected:
@@ -179,6 +185,15 @@ class SerialConnection:
                 self._progress_callback(-1, self._total_commands, str(e))
         finally:
             self._sending = False
+            # Park at water cup after plot finishes or is stopped
+            if self._serial and self._serial.is_open and not self._stop_requested:
+                try:
+                    self._send_direct("G90")
+                    self._send_direct(f"G1 Z{20:.3f} F3000")
+                    self._send_direct("G1 X0.000 Y0.000 F3000")
+                    self._send_direct("G1 Z0.000 F300")
+                except Exception:
+                    pass
 
     def stop(self):
         self._stop_requested = True
