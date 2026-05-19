@@ -850,6 +850,10 @@ In the year of our Lord when the great oak of Thornwood fell, so too did the las
                             <h3 class="panel-title">Export</h3>
                             <button id="btn-ink-send" class="btn btn-primary btn-block" disabled>Send to Plotter</button>
                             <button id="btn-ink-download" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Download SVG</button>
+                            <button id="btn-ink-read" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Read Handwriting</button>
+                            <div id="ink-ocr-result" class="hidden" style="margin-top:6px;max-height:200px;overflow-y:auto">
+                                <pre style="white-space:pre-wrap;font-size:12px;padding:8px;background:var(--bg-1);border-radius:4px;border:1px solid var(--border-light)"></pre>
+                            </div>
                         </section>
                     </div>
                 </div>
@@ -861,6 +865,6 @@ In the year of our Lord when the great oak of Thornwood fell, so too did the las
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
 </body>
 </html>

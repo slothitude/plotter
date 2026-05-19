@@ -2326,6 +2326,7 @@ function initInk() {
         el('btn-ink-clear').disabled = n === 0;
         el('btn-ink-send').disabled = n === 0;
         el('btn-ink-download').disabled = n === 0;
+        el('btn-ink-read').disabled = n === 0 && !state.currentSvgId;
     }
 
     // Undo
@@ -2442,6 +2443,71 @@ function initInk() {
         a.download = 'handwriting.svg';
         a.click();
         URL.revokeObjectURL(a.href);
+    });
+
+    // Read Handwriting (OCR via vision LLM)
+    el('btn-ink-read').addEventListener('click', () => {
+        const svgId = state.currentSvgId;
+        if (!svgId && !strokes.length) return toast('Capture or load an ink page first', 'warn');
+
+        const btn = el('btn-ink-read');
+        const resultDiv = el('ink-ocr-result');
+        const pre = resultDiv.querySelector('pre');
+        btn.disabled = true;
+        btn.textContent = 'Reading...';
+        resultDiv.classList.remove('hidden');
+        pre.textContent = 'Analyzing handwriting...';
+
+        // If strokes on canvas but no saved SVG, save first
+        const doOCR = (id) => {
+            api('/api/ink/ocr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    pre.textContent = data.error;
+                    toast(data.error, 'error');
+                } else {
+                    pre.textContent = data.text || '(no text detected)';
+                    toast('Handwriting read', 'success');
+                }
+            })
+            .catch(err => {
+                pre.textContent = 'OCR failed: ' + err.message;
+                toast('OCR failed', 'error');
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.textContent = 'Read Handwriting';
+            });
+        };
+
+        if (svgId) {
+            doOCR(svgId);
+        } else {
+            // Save SVG first, then OCR
+            const svgStr = buildSVG();
+            const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+            const file = new File([blob], 'handwriting.svg', { type: 'image/svg+xml' });
+            const fd = new FormData();
+            fd.append('file', file);
+            api('/api/upload', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) throw new Error(data.error);
+                    state.currentSvgId = data.id;
+                    doOCR(data.id);
+                })
+                .catch(err => {
+                    pre.textContent = 'Save failed: ' + err.message;
+                    toast('Save failed', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Read Handwriting';
+                });
+        }
     });
 
     // ── Wacom Slate integration ──────────────────────────────────

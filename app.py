@@ -1,15 +1,19 @@
 """Pen Plotter — Flask web application."""
 
+import base64
 import json
 import math
 import os
 import shutil
 import subprocess
+import time
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import cv2
 import numpy as np
+import requests
 import svgwrite
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_sock import Sock
@@ -825,6 +829,286 @@ def ink_load_page():
         return jsonify({"id": file_id, "stroke_count": len(polylines)})
     except Exception:
         return jsonify({"id": file_id, "stroke_count": 0, "warning": "Could not parse page"})
+
+
+# ── Ink OCR ──────────────────────────────────────────────────────────
+
+NIM_API_KEY = os.environ.get("NIM_API_KEY", "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")
+NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NIM_MODEL = "microsoft/phi-4-multimodal-instruct"
+ZHIPU_API_KEY = os.environ.get("RABBIT_LLM_KEY", "a63a2a7ee2d5431d929c776122e3b706.hzHjrJlnfPd7cYfj")
+ZHIPU_VISION_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+ZHIPU_VISION_MODEL = "glm-4.5v"
+OLLAMA_URL = "http://192.168.0.33:11434/v1/chat/completions"
+OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "minicpm-v")
+
+
+def _svg_to_png(svg_path: str) -> bytes:
+    """Render SVG polylines to a white PNG image."""
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    ns = {"svg": "http://www.w3.org/2000/svg"}
+
+    # Determine viewBox scale
+    vb = root.get("viewBox", "")
+    if vb:
+        parts = vb.replace(",", " ").split()
+        vb_w, vb_h = float(parts[2]), float(parts[3])
+    else:
+        vb_w, vb_h = 148.0, 210.0
+
+    # Raw Wacom coords (> 1000) → scale to 2048px; mm-space → 150 dpi
+    if vb_w > 1000:
+        scale = 2048 / max(vb_w, vb_h)
+        target_w, target_h = int(vb_w * scale), int(vb_h * scale)
+    else:
+        dpi = 150
+        target_w, target_h = int(vb_w * dpi / 25.4), int(vb_h * dpi / 25.4)
+
+    img = np.ones((target_h, target_w, 3), dtype=np.uint8) * 255
+
+    for pl in root.iter("{http://www.w3.org/2000/svg}polyline"):
+        pts_str = pl.get("points", "")
+        if not pts_str.strip():
+            continue
+        pts = []
+        for pair in pts_str.strip().split():
+            x, y = pair.split(",")
+            px = int(float(x) / vb_w * target_w)
+            py = int(float(y) / vb_h * target_h)
+            pts.append([px, py])
+        if len(pts) >= 2:
+            cv2.polylines(img, [np.array(pts)], False, (0, 0, 0), 2, cv2.LINE_AA)
+
+    # Auto-crop to ink content with padding
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
+    coords = cv2.findNonZero(mask)
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        pad = max(20, int(min(w, h) * 0.05))
+        x0, y0 = max(0, x - pad), max(0, y - pad)
+        x1, y1 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
+        img = img[y0:y1, x0:x1]
+
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise RuntimeError("PNG encode failed")
+    return buf.tobytes()
+
+
+def _detect_regions(svg_path: str, img_w: int, img_h: int) -> list[dict]:
+    """Detect text vs drawing regions by analyzing connected components in the rendered ink.
+
+    Returns list of {type: "text"|"drawing", bbox: [x,y,w,h], hint: str}.
+    """
+    # Render a quick grayscale mask of just the ink
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    vb = root.get("viewBox", "")
+    if vb:
+        parts = vb.replace(",", " ").split()
+        vb_w, vb_h = float(parts[2]), float(parts[3])
+    else:
+        vb_w, vb_h = 148.0, 210.0
+
+    mask = np.zeros((img_h, img_w), dtype=np.uint8)
+    for pl in root.iter("{http://www.w3.org/2000/svg}polyline"):
+        pts_str = pl.get("points", "")
+        if not pts_str.strip():
+            continue
+        pts = []
+        for pair in pts_str.strip().split():
+            x, y = pair.split(",")
+            px = int(float(x) / vb_w * img_w)
+            py = int(float(y) / vb_h * img_h)
+            pts.append([px, py])
+        if len(pts) >= 2:
+            cv2.polylines(mask, [np.array(pts)], False, 255, 2, cv2.LINE_AA)
+
+    # Dilate to connect nearby ink into blobs
+    kern = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    dilated = cv2.dilate(mask, kern, iterations=2)
+
+    # Find connected components
+    n_labels, labels, stats_arr, centroids = cv2.connectedComponentsWithStats(dilated)
+    regions = []
+    for i in range(1, n_labels):  # skip background (0)
+        rx, ry, rw, rh = stats_arr[i, :4]
+        area = stats_arr[i, cv2.CC_STAT_AREA]
+        if area < 100:  # skip tiny specks
+            continue
+
+        # Classify: dense small components with low aspect = text, large spread = drawing
+        aspect = rw / max(rh, 1)
+        density = area / max(rw * rh, 1)
+
+        # Count original ink pixels in this region
+        component_mask = (labels == i).astype(np.uint8) * 255
+        ink_pixels = cv2.countNonZero(cv2.bitwise_and(mask, component_mask))
+        stroke_density = ink_pixels / max(area, 1)
+
+        # Heuristic:
+        #   Text: many thin strokes, high stroke density, compact
+        #   Drawing: larger area, lower density, often more spread
+        if rw > img_w * 0.4 and rh > img_h * 0.4:
+            # Huge region spanning most of page — mixed or full-page content
+            rtype = "mixed"
+        elif stroke_density > 0.15 and max(rw, rh) < max(img_w, img_h) * 0.35:
+            rtype = "text"
+        else:
+            rtype = "drawing"
+
+        regions.append({
+            "type": rtype,
+            "bbox": [int(rx), int(ry), int(rw), int(rh)],
+            "area": int(area),
+            "stroke_density": round(stroke_density, 3),
+        })
+
+    # Sort top-to-bottom, left-to-right (reading order)
+    regions.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+    return regions
+
+
+def _call_vision_llm(image_b64: str, prompt: str) -> str:
+    """Call vision LLM with base64 PNG, return transcribed text.
+
+    Provider chain: NVIDIA NIM → ZhipuAI glm-4.5v → Ollama.
+    """
+    content = [
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        {"type": "text", "text": prompt},
+    ]
+    base_payload = {
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": 8192,
+        "temperature": 0.2,
+    }
+
+    providers = [
+        {
+            "name": "NVIDIA NIM",
+            "url": NIM_URL,
+            "model": NIM_MODEL,
+            "headers": {
+                "Authorization": f"Bearer {NIM_API_KEY}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            "timeout": 90,
+        },
+        {
+            "name": "ZhipuAI vision",
+            "url": ZHIPU_VISION_URL,
+            "model": ZHIPU_VISION_MODEL,
+            "headers": {
+                "Authorization": f"Bearer {ZHIPU_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            "timeout": 120,
+        },
+        {
+            "name": "Ollama",
+            "url": OLLAMA_URL,
+            "model": OLLAMA_VISION_MODEL,
+            "headers": {"Content-Type": "application/json"},
+            "timeout": 600,
+        },
+    ]
+
+    last_err = None
+    for prov in providers:
+        payload = {**base_payload, "model": prov["model"]}
+        for attempt in range(2):
+            try:
+                resp = requests.post(
+                    prov["url"], json=payload, headers=prov["headers"], timeout=prov["timeout"],
+                )
+                if resp.status_code == 429:
+                    time.sleep(10 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                text = msg.get("content", "") or msg.get("reasoning", "") or ""
+                if text and "forgot to attach" not in text.lower() and "provide the image" not in text.lower():
+                    return text
+                # Model didn't see the image — skip to next provider
+                break
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    time.sleep(3)
+                else:
+                    break
+
+    raise RuntimeError(f"All vision providers failed. Last error: {last_err}")
+
+
+@app.route("/api/ink/ocr", methods=["POST"])
+def ink_ocr():
+    """OCR a captured ink SVG using a vision LLM with region-aware prompting."""
+    data = request.json or {}
+    file_id = data.get("id")
+    if not file_id:
+        return jsonify({"error": "id required"}), 400
+
+    svg_path = uploaded_svgs.get(file_id) or str(config.OUTPUT_DIR / f"ink_{file_id}.svg")
+    if not os.path.isfile(svg_path):
+        return jsonify({"error": "SVG not found"}), 404
+
+    try:
+        png_bytes = _svg_to_png(svg_path)
+        img_b64 = base64.b64encode(png_bytes).decode()
+    except Exception as e:
+        return jsonify({"error": f"SVG render failed: {e}"}), 500
+
+    # Detect regions to build a context hint
+    try:
+        img_arr = cv2.imdecode(np.frombuffer(png_bytes, np.uint8), cv2.IMREAD_COLOR)
+        ih, iw = img_arr.shape[:2]
+        regions = _detect_regions(svg_path, iw, ih)
+    except Exception:
+        regions = []
+
+    # Build region hint for the LLM
+    hint_parts = []
+    n_text = sum(1 for r in regions if r["type"] == "text")
+    n_draw = sum(1 for r in regions if r["type"] == "drawing")
+    n_mixed = sum(1 for r in regions if r["type"] == "mixed")
+
+    if regions:
+        if n_text:
+            hint_parts.append(f"{n_text} text region{'s' if n_text > 1 else ''}")
+        if n_draw:
+            hint_parts.append(f"{n_draw} drawing/figure region{'s' if n_draw > 1 else ''}")
+        if n_mixed:
+            hint_parts.append(f"{n_mixed} mixed region{'s' if n_mixed > 1 else ''}")
+
+    region_hint = ""
+    if hint_parts:
+        region_hint = (
+            f"\n\nAutomated region analysis detected: {', '.join(hint_parts)}. "
+            "Use this as a guide — trust your own visual judgment over these hints."
+        )
+
+    prompt = (
+        "Analyze this handwritten page. Do the following:\n"
+        "1. Transcribe all handwritten text exactly as written, preserving line breaks and layout.\n"
+        "2. If there are any drawings, diagrams, or sketches, describe them in [brackets] "
+        "at the approximate position they appear relative to the text.\n"
+        "3. If a region contains both text and drawings, transcribe the text and describe the drawing together.\n"
+        "Output the full transcription. Use [drawing: description] for any non-text content."
+        + region_hint
+    )
+
+    try:
+        text = _call_vision_llm(img_b64, prompt)
+    except Exception as e:
+        return jsonify({"error": f"OCR failed: {e}"}), 500
+
+    return jsonify({"ok": True, "text": text, "regions": regions})
 
 
 # ── Print ────────────────────────────────────────────────────────────
