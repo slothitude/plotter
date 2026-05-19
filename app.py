@@ -52,6 +52,38 @@ _slate_process: subprocess.Popen | None = None
 _ink_strokes: list = []  # accumulated BLE streamed strokes from capture.py
 PENZ_DIR = r"C:\Users\aaron\penz"
 
+# Live plot state
+_live_plot_active = False
+_live_plot_profile = None
+_live_stroke_points: list = []  # accumulate mm points for current stroke
+
+
+def _wacom_to_bed(wacom_x, wacom_y, page_w, page_h):
+    """Map Wacom Slate A5 portrait coords to plotter bed mm.
+
+    Slate is portrait: 21600 (X) x 14700 (Y).
+    Same mapping as the JS fix: swap X/Y and rotate 180°.
+    """
+    x_mm = (1 - wacom_y / 14700) * page_w
+    y_mm = wacom_x / 21600 * page_h
+    return round(x_mm, 3), round(y_mm, 3)
+
+
+def _stroke_to_gcode(points_mm, profile):
+    """Convert a list of (x_mm, y_mm) points to G-code lines for one stroke."""
+    if len(points_mm) < 2:
+        return []
+    ht = profile.height
+    mv = profile.movement
+    lines = []
+    x0, y0 = points_mm[0]
+    lines.append(f"G0 X{x0:.3f} Y{y0:.3f} F{mv.travel_speed:.0f}")
+    lines.append(f"G1 Z{ht.pen_down_z:.3f} F3000")
+    for x, y in points_mm[1:]:
+        lines.append(f"G1 X{x:.3f} Y{y:.3f} F{mv.draw_speed:.0f}")
+    lines.append(f"G1 Z{ht.pen_up_z:.3f} F3000")
+    return lines
+
 
 # ── WebSocket ────────────────────────────────────────────────────────
 
@@ -143,7 +175,8 @@ def get_status():
             pass
     return jsonify({
         "connected": serial.is_connected,
-        "busy": serial._sending,
+        "busy": serial._sending or serial._live_sending,
+        "live_plot": _live_plot_active,
         "position": pos,
     })
 
@@ -591,15 +624,78 @@ def download_trace_svg(file_id):
 @app.route("/stream/stroke", methods=["POST"])
 def ink_stream():
     """Receive stroke batches from capture.py (Wacom BLE capture subprocess)."""
-    global _ink_strokes
+    global _ink_strokes, _live_stroke_points
     data = request.json or {}
     points = data.get("points", [])
-    if not points:
+    stroke_end = data.get("stroke_end", False)
+    if not points and not stroke_end:
         return jsonify({"status": "ok"})
-    _ink_strokes.append(points)
-    print(f"  INK: {len(points)} pts, ws_clients={len(ws_clients)}", flush=True)
-    _broadcast_ink(points)
+    if points:
+        _ink_strokes.append(points)
+        print(f"  INK: {len(points)} pts, ws_clients={len(ws_clients)}", flush=True)
+        _broadcast_ink(points)
+
+        # Live plot: map points to bed mm and accumulate
+        if _live_plot_active and _live_plot_profile and serial.is_connected:
+            page = config.load_page_size()
+            pw, ph = page["width"], page["height"]
+            for pt in points:
+                if len(pt) >= 2:
+                    mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
+                    _live_stroke_points.append((mx, my))
+
+    # Stroke complete: generate G-code and queue for plotter
+    if stroke_end and _live_plot_active and _live_stroke_points and serial.is_connected:
+        gcode_lines = _stroke_to_gcode(_live_stroke_points, _live_plot_profile)
+        if gcode_lines:
+            serial.queue_stroke(gcode_lines)
+            print(f"  LIVE PLOT: queued stroke ({len(gcode_lines)} lines)", flush=True)
+        _live_stroke_points = []
+
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/ink/live-start", methods=["POST"])
+def ink_live_start():
+    """Start live plot mode: plotter homes and waits for strokes."""
+    global _live_plot_active, _live_plot_profile
+    if not serial.is_connected:
+        return jsonify({"error": "Plotter not connected"}), 400
+    if _live_plot_active:
+        return jsonify({"error": "Live plot already active"}), 400
+    data = request.json or {}
+    tool = data.get("tool", "pencil")
+    try:
+        _live_plot_profile = config.load_profile(tool)
+    except FileNotFoundError:
+        return jsonify({"error": f"Profile '{tool}' not found"}), 404
+    try:
+        serial.start_live_mode(config.SAFE_Z)
+        _live_plot_active = True
+        return jsonify({"ok": True, "message": "Live plot started"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ink/live-stop", methods=["POST"])
+def ink_live_stop():
+    """Stop live plot mode: flush pending stroke and park plotter."""
+    global _live_plot_active, _live_plot_profile, _live_stroke_points
+    if not _live_plot_active:
+        return jsonify({"ok": True, "message": "Live plot not active"})
+    # Flush any in-progress stroke
+    if _live_stroke_points and serial.is_connected:
+        gcode_lines = _stroke_to_gcode(_live_stroke_points, _live_plot_profile)
+        if gcode_lines:
+            serial.queue_stroke(gcode_lines)
+    _live_stroke_points = []
+    _live_plot_active = False
+    _live_plot_profile = None
+    try:
+        serial.stop_live_mode(config.SAFE_Z)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "message": "Live plot stopped"})
 
 
 @app.route("/api/ink/capture", methods=["POST"])

@@ -23,6 +23,10 @@ class SerialConnection:
         self._stop_requested = False
         self._current_file: Optional[str] = None
         self._position = {}
+        # Live plot mode
+        self._stroke_queue: deque[str] = deque()
+        self._live_sending = False
+        self._live_thread: Optional[threading.Thread] = None
 
     # ── Connection ──────────────────────────────────────────────────
 
@@ -141,6 +145,8 @@ class SerialConnection:
                         progress_callback: Optional[Callable] = None):
         if self._sending:
             raise RuntimeError("Already sending. Stop current job first.")
+        if self._live_sending:
+            raise RuntimeError("Live plot mode active. Stop it first.")
         lines = [l.strip() for l in gcode.splitlines() if l.strip() and not l.strip().startswith(";")]
         self._queue = deque(lines)
         self._total_commands = len(lines)
@@ -198,6 +204,8 @@ class SerialConnection:
     def stop(self):
         self._stop_requested = True
         self._queue.clear()
+        self._stroke_queue.clear()
+        self._live_sending = False
         if self.is_connected:
             try:
                 with self._lock:
@@ -210,11 +218,91 @@ class SerialConnection:
                 pass
         self._sending = False
 
+    # ── Live Plot Mode ──────────────────────────────────────────────────
+
+    def start_live_mode(self, safe_z: float):
+        """Enter live plotting mode: home, raise to safe Z, start sender thread."""
+        if self._sending:
+            raise RuntimeError("Already sending a file. Stop it first.")
+        if self._live_sending:
+            return  # already in live mode
+        self._stroke_queue.clear()
+        self._stop_requested = False
+        # Home and prepare
+        with self._lock:
+            self._serial.write(b"G28\n")
+            self._serial.flush()
+            self._drain()
+            time.sleep(1)
+            self._serial.write(b"G90\n")
+            self._serial.flush()
+            self._serial.write(f"G1 Z{safe_z:.3f} F3000\n".encode())
+            self._serial.flush()
+            self._drain()
+        self._live_sending = True
+        self._live_thread = threading.Thread(target=self._live_send_loop, daemon=True)
+        self._live_thread.start()
+
+    def stop_live_mode(self, safe_z: float):
+        """Exit live mode: park plotter and stop sender thread."""
+        self._stop_requested = True
+        self._live_sending = False
+        if self._live_thread:
+            self._live_thread.join(timeout=5)
+            self._live_thread = None
+        if self.is_connected:
+            try:
+                with self._lock:
+                    self._serial.write(f"G1 Z{safe_z:.3f} F3000\n".encode())
+                    self._serial.flush()
+                    self._serial.write(b"G28\n")
+                    self._serial.flush()
+            except Exception:
+                pass
+        self._stroke_queue.clear()
+        self._stop_requested = False
+
+    def queue_stroke(self, gcode_lines: list[str]):
+        """Queue a complete stroke's G-code for live sending."""
+        self._stroke_queue.extend(gcode_lines)
+
+    def _live_send_loop(self):
+        """Send queued G-code lines one at a time, waiting for 'ok' ack."""
+        idle_since = time.time()
+        while not self._stop_requested and self._live_sending:
+            if not self._stroke_queue:
+                if time.time() - idle_since > 300:  # 5min idle timeout
+                    break
+                time.sleep(0.05)
+                continue
+            idle_since = time.time()
+            cmd = self._stroke_queue.popleft()
+            if not cmd or cmd.startswith(";"):
+                continue
+            try:
+                with self._lock:
+                    self._serial.write((cmd + "\n").encode())
+                    self._serial.flush()
+                    deadline = time.time() + 10
+                    while time.time() < deadline:
+                        line = self._serial.readline()
+                        if not line:
+                            continue
+                        decoded = line.decode(errors="ignore").strip()
+                        if "ok" in decoded.lower():
+                            break
+                        if decoded.startswith("X:"):
+                            self._parse_position(decoded)
+            except Exception:
+                break
+        self._live_sending = False
+
     @property
     def status(self) -> dict:
         return {
             "connected": self.is_connected,
-            "busy": self._sending,
+            "busy": self._sending or self._live_sending,
+            "live_plot": self._live_sending,
             "current_file": self._current_file,
             "progress": {
                 "completed": self._completed_commands,

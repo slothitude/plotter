@@ -166,6 +166,7 @@ function setConnected(val) {
     state.connected = val;
     const btn = document.getElementById('btn-connect');
     const badge = document.getElementById('conn-status');
+    const liveBtn = document.getElementById('btn-live-plot');
     if (val) {
         btn.textContent = 'DISCONNECT';
         btn.classList.remove('btn-connect');
@@ -175,6 +176,12 @@ function setConnected(val) {
         badge.textContent = 'ONLINE';
         badge.className = 'conn-badge connected';
         logSerial('info', 'Printer connected');
+        // Enable live plot if capture is running
+        if (liveBtn && !liveBtn.classList.contains('active')) {
+            api('/api/ink/status').then(r => r.json()).then(d => {
+                liveBtn.disabled = !d.capturing;
+            }).catch(() => {});
+        }
     } else {
         btn.textContent = 'CONNECT';
         btn.classList.add('btn-connect');
@@ -184,6 +191,7 @@ function setConnected(val) {
         badge.textContent = 'OFFLINE';
         badge.className = 'conn-badge disconnected';
         logSerial('info', 'Printer disconnected');
+        if (liveBtn) liveBtn.disabled = true;
     }
 }
 
@@ -2443,7 +2451,9 @@ function initInk() {
     const btnSync = el('btn-slate-sync');
     const btnLoad = el('btn-slate-load');
     const pagesSelect = el('slate-pages-select');
+    const btnLivePlot = el('btn-live-plot');
     let slatePollId = null;
+    let livePlotActive = false;
 
     // Global callback for WebSocket ink messages
     window._onInkStroke = (points) => {
@@ -2468,10 +2478,12 @@ function initInk() {
                 setSlateStatus('Capturing...', 'green');
                 btnConnect.disabled = true;
                 btnStop.disabled = false;
+                btnLivePlot.disabled = !state.connected;
             } else {
                 setSlateStatus('Disconnected', 'text-2');
                 btnConnect.disabled = false;
                 btnStop.disabled = true;
+                btnLivePlot.disabled = true;
                 clearInterval(slatePollId);
                 slatePollId = null;
             }
@@ -2506,6 +2518,13 @@ function initInk() {
     // Stop & Save
     btnStop.addEventListener('click', () => {
         btnStop.disabled = true;
+        // Stop live plot first if active
+        if (livePlotActive) {
+            api('/api/ink/live-stop', { method: 'POST' }).catch(() => {});
+            livePlotActive = false;
+            btnLivePlot.classList.remove('active');
+            btnLivePlot.textContent = 'Live Plot';
+        }
         setSlateStatus('Saving...', 'text-1');
         api('/api/ink/stop', { method: 'POST' })
             .then(r => r.json())
@@ -2574,6 +2593,45 @@ function initInk() {
                 }
             })
             .catch(() => { btnSync.disabled = false; });
+    });
+
+    // Live Plot
+    btnLivePlot.addEventListener('click', () => {
+        if (livePlotActive) {
+            // Stop live plot
+            api('/api/ink/live-stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    livePlotActive = false;
+                    btnLivePlot.classList.remove('active');
+                    btnLivePlot.textContent = 'Live Plot';
+                    btnStop.disabled = false;
+                    setSlateStatus('Capturing...', 'green');
+                    toast('Live plot stopped — plotter parked', 'success');
+                });
+        } else {
+            // Start live plot
+            const tool = state.plotTool || 'pencil';
+            api('/api/ink/live-start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    toast(data.error, 'error');
+                    return;
+                }
+                livePlotActive = true;
+                btnLivePlot.classList.add('active');
+                btnLivePlot.textContent = 'Stop Live Plot';
+                btnStop.disabled = true;
+                setSlateStatus('LIVE PLOTTING', 'orange');
+                toast('Live plot active — draw on Slate to plot', 'success');
+            })
+            .catch(err => toast('Live plot failed: ' + err.message, 'error'));
+        }
     });
 
     // Load Page

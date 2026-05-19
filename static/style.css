@@ -379,6 +379,31 @@ body {
     box-shadow: var(--green-glow);
 }
 
+.btn-live-plot {
+    background: var(--orange-dim);
+    color: var(--orange);
+    border-color: var(--orange);
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.btn-live-plot:hover:not(:disabled) {
+    background: var(--orange);
+    color: var(--base-0);
+}
+
+.btn-live-plot.active {
+    background: var(--red);
+    color: var(--base-0);
+    border-color: var(--red);
+    animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+    0%, 100% { box-shadow: 0 0 4px var(--red-dim); }
+    50% { box-shadow: 0 0 16px var(--red-dim); }
+}
+
 .btn-outline {
     background: transparent;
     border-color: var(--green);
