@@ -2447,10 +2447,10 @@ function initInk() {
 
     // Global callback for WebSocket ink messages
     window._onInkStroke = (points) => {
-        // Convert Wacom coords (21600×14700) → page mm
+        // A5 Slate held portrait: swap X↔Y, flip both axes for 180° rotation
         const stroke = points.map(([x, y, p]) => ({
-            x: x / 21600 * inkPageW,
-            y: (1 - y / 14700) * inkPageH,
+            x: (1 - y / 14700) * inkPageW,
+            y: x / 21600 * inkPageH,
             pressure: p / 1024,
         }));
         strokes.push({ points: stroke });
