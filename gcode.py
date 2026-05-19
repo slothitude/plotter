@@ -458,7 +458,7 @@ def _water_dip_gcode(profile: config.ToolProfile, travel_speed: float = None,
 
 def _emit_stroke_pass(
     polylines, transform, lines, toolpath,
-    draw_speed, travel_speed, pen_down_z, safe_z,
+    draw_speed, travel_speed, pen_down_z, safe_z, pen_lift_z,
     water_cfg=None, profile=None, initial_dip=False, segment_start=0,
 ):
     """Emit G-code for one pass over all polylines.
@@ -506,7 +506,7 @@ def _emit_stroke_pass(
         toolpath.append({"type": "draw", "points": draw_pts, "layer": polyline.layer})
 
         # Pen up
-        lines.append(f"G1 Z{safe_z:.3f} F{travel_speed:.0f} ; Pen up")
+        lines.append(f"G1 Z{pen_lift_z:.3f} F{travel_speed:.0f} ; Pen up")
 
     return segment_count
 
@@ -537,7 +537,9 @@ def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scale
     lines.append("G90 ; Absolute positioning")
 
     pass1_safe_z = max(config.SAFE_Z, ht.pen_up_z)
+    pass1_lift_z = ht.pen_up_z  # Use profile lift height for between-stroke lifts
     pass2_safe_z = max(config.SAFE_Z, p2.lift_height)
+    pass2_lift_z = p2.lift_height if p2.lift_height > 0 else ht.pen_up_z
 
     lines.append(f"G1 Z{pass1_safe_z:.3f} F{mv.travel_speed:.0f} ; Safe travel height")
     lines.append("")
@@ -552,6 +554,7 @@ def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scale
         travel_speed=mv.travel_speed,
         pen_down_z=ht.pen_down_z,
         safe_z=pass1_safe_z,
+        pen_lift_z=pass1_lift_z,
         water_cfg=None,       # no water dips in dry pass
         profile=None,
         initial_dip=False,
@@ -576,6 +579,7 @@ def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scale
         travel_speed=p2.travel_speed,
         pen_down_z=p2.pen_down_z if p2.pen_down_z != 0.0 else ht.pen_down_z,
         safe_z=pass2_safe_z,
+        pen_lift_z=pass2_lift_z,
         water_cfg=wt,         # periodic water dips
         profile=profile,
         initial_dip=True,     # dip brush before first stroke
@@ -734,6 +738,7 @@ def polylines_to_gcode(
     lines.append("G28 ; Home all axes")
     lines.append("G90 ; Absolute positioning")
     safe_z = max(config.SAFE_Z, ht.pen_up_z)
+    pen_lift_z = ht.pen_up_z  # Use profile lift height for between-stroke lifts
     lines.append(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe travel height")
     lines.append("")
 
@@ -791,8 +796,8 @@ def polylines_to_gcode(
 
         toolpath.append({"type": "draw", "points": draw_pts, "layer": polyline.layer})
 
-        # Pen up to safe travel height
-        lines.append(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Pen up (safe Z)")
+        # Pen up to lift height
+        lines.append(f"G1 Z{pen_lift_z:.3f} F{mv.travel_speed:.0f} ; Pen up")
 
     lines.append("")
     lines.append("; Park")

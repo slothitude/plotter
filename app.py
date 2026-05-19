@@ -1,10 +1,16 @@
 """Pen Plotter — Flask web application."""
 
+import json
 import math
 import os
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
+import cv2
+import numpy as np
+import svgwrite
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_sock import Sock
 
@@ -41,20 +47,35 @@ uploaded_svgs: dict[str, str] = {}  # id -> file path
 generated_gcode: dict[str, str] = {}  # id -> gcode string
 ws_clients: list = []
 
+# Ink / Slate state
+_slate_process: subprocess.Popen | None = None
+_ink_strokes: list = []  # accumulated BLE streamed strokes from capture.py
+PENZ_DIR = r"C:\Users\aaron\penz"
+
 
 # ── WebSocket ────────────────────────────────────────────────────────
 
 def _broadcast_progress(completed, total, info):
     """Broadcast progress to all connected WebSocket clients."""
-    msg = {
+    msg = json.dumps({
         "type": "progress",
         "completed": completed,
         "total": total,
         "info": info,
-    }
+    })
     for ws in ws_clients[:]:
         try:
-            ws.send_json(msg)
+            ws.send(msg)
+        except Exception:
+            ws_clients.remove(ws)
+
+
+def _broadcast_ink(points):
+    """Broadcast ink stroke data to all connected WebSocket clients."""
+    msg = json.dumps({"type": "ink", "points": points})
+    for ws in ws_clients[:]:
+        try:
+            ws.send(msg)
         except Exception:
             ws_clients.remove(ws)
 
@@ -426,6 +447,288 @@ def download_gcode(file_id):
     if not gcode_path.exists():
         return jsonify({"error": "G-code not found"}), 404
     return send_file(gcode_path, as_attachment=True, download_name=f"plot_{file_id}.gcode")
+
+
+# ── Toon Tracer ──────────────────────────────────────────────────────
+
+@app.route("/api/trace", methods=["POST"])
+def trace_image():
+    """Image-to-SVG edge tracing via OpenCV pipeline."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"):
+        return jsonify({"error": "Unsupported image format"}), 400
+
+    # Parameters with defaults
+    canny_low = int(request.form.get("canny_low", 50))
+    canny_high = int(request.form.get("canny_high", 150))
+    blur = int(request.form.get("blur", 9))
+    posterize_levels = int(request.form.get("posterize", 8))
+    epsilon = float(request.form.get("epsilon", 1.5))
+    min_contour_length = int(request.form.get("min_contour_length", 10))
+    invert = request.form.get("invert", "false") == "true"
+    page_width = float(request.form.get("page_width", 220))
+    page_height = float(request.form.get("page_height", 220))
+
+    # Read image from bytes
+    img_bytes = np.frombuffer(f.read(), dtype=np.uint8)
+    img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
+    if img is None:
+        return jsonify({"error": "Could not decode image"}), 400
+
+    img_h, img_w = img.shape[:2]
+
+    # Resize if longest side > 1500px
+    max_dim = 1500
+    if max(img_w, img_h) > max_dim:
+        scale = max_dim / max(img_w, img_h)
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        img_h, img_w = img.shape[:2]
+
+    # Grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Invert if needed (light-on-dark images)
+    if invert:
+        gray = cv2.bitwise_not(gray)
+
+    # Bilateral filter — smooth while preserving edges
+    d = blur if blur % 2 == 1 else blur + 1
+    gray = cv2.bilateralFilter(gray, d, 75, 75)
+
+    # Posterize — reduce to N gray levels for cleaner edges
+    if posterize_levels > 1:
+        step = 256 / posterize_levels
+        gray = np.floor(gray / step) * step
+        gray = gray.astype(np.uint8)
+
+    # Canny edge detection
+    edges = cv2.Canny(gray, canny_low, canny_high)
+
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Filter and simplify contours
+    polylines = []
+    for contour in contours:
+        if len(contour) < min_contour_length:
+            continue
+        approx = cv2.approxPolyDP(contour, epsilon, closed=False)
+        if len(approx) < 2:
+            continue
+        polylines.append(approx.reshape(-1, 2))
+
+    if not polylines:
+        return jsonify({"error": "No edges detected — try adjusting parameters"}), 400
+
+    # Scale pixel coords → mm (fit into page with 10mm margin)
+    margin = 10
+    fit_w = page_width - 2 * margin
+    fit_h = page_height - 2 * margin
+    scale_x = fit_w / img_w
+    scale_y = fit_h / img_h
+    scale_f = min(scale_x, scale_y)
+
+    offset_x = margin + (fit_w - img_w * scale_f) / 2
+    offset_y = margin + (fit_h - img_h * scale_f) / 2
+
+    # Build SVG via svgwrite
+    file_id = uuid.uuid4().hex[:8]
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    svg_path = config.OUTPUT_DIR / f"trace_{file_id}.svg"
+
+    dwg = svgwrite.Drawing(
+        str(svg_path),
+        size=(f"{page_width}mm", f"{page_height}mm"),
+        viewBox=f"0 0 {page_width} {page_height}",
+    )
+
+    for pts in polylines:
+        if len(pts) < 2:
+            continue
+        # Flip Y axis (image origin top-left → plotter origin bottom-left)
+        mm_pts = [
+            (round(offset_x + px * scale_f, 3), round(page_height - (offset_y + py * scale_f), 3))
+            for px, py in pts
+        ]
+        dwg.add(dwg.polyline(mm_pts, stroke="black", fill="none", stroke_width=0.3))
+
+    dwg.save()
+
+    # Register in uploaded_svgs so existing convert/plot pipeline works
+    uploaded_svgs[file_id] = str(svg_path)
+
+    # Build polyline data for canvas preview (pixel coords)
+    preview_polylines = []
+    for pts in polylines:
+        preview_polylines.append([(int(px), int(py)) for px, py in pts])
+
+    return jsonify({
+        "id": file_id,
+        "polylines": preview_polylines,
+        "stroke_count": len(polylines),
+        "image_size": [img_w, img_h],
+        "svg_file": f"/api/trace-svg/{file_id}",
+    })
+
+
+@app.route("/api/trace-svg/<file_id>")
+def download_trace_svg(file_id):
+    svg_path = config.OUTPUT_DIR / f"trace_{file_id}.svg"
+    if not svg_path.exists():
+        return jsonify({"error": "SVG not found"}), 404
+    return send_file(svg_path, as_attachment=True, download_name=f"trace_{file_id}.svg")
+
+
+# ── Ink / Wacom Slate ────────────────────────────────────────────────
+
+@app.route("/stream/stroke", methods=["POST"])
+def ink_stream():
+    """Receive stroke batches from capture.py (Wacom BLE capture subprocess)."""
+    global _ink_strokes
+    data = request.json or {}
+    points = data.get("points", [])
+    if not points:
+        return jsonify({"status": "ok"})
+    _ink_strokes.append(points)
+    print(f"  INK: {len(points)} pts, ws_clients={len(ws_clients)}", flush=True)
+    _broadcast_ink(points)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/ink/capture", methods=["POST"])
+def ink_capture():
+    """Spawn capture.py as subprocess to stream live BLE pen data."""
+    global _slate_process, _ink_strokes
+    if _slate_process and _slate_process.poll() is None:
+        return jsonify({"error": "Capture already running"}), 400
+    _ink_strokes.clear()
+    _slate_process = subprocess.Popen(
+        ["python", "capture.py", "--api", "http://localhost:5000"],
+        cwd=PENZ_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    return jsonify({"ok": True, "pid": _slate_process.pid})
+
+
+@app.route("/api/ink/stop", methods=["POST"])
+def ink_stop():
+    """Stop capture subprocess and generate SVG from accumulated strokes."""
+    global _slate_process, _ink_strokes
+    if _slate_process and _slate_process.poll() is None:
+        _slate_process.terminate()
+        try:
+            _slate_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _slate_process.kill()
+
+    stroke_count = sum(len(s) for s in _ink_strokes)
+    if stroke_count == 0:
+        _slate_process = None
+        return jsonify({"error": "No strokes captured"}), 400
+
+    # Generate SVG from accumulated strokes
+    page = config.load_page_size()
+    pw, ph = page["width"], page["height"]
+
+    file_id = uuid.uuid4().hex[:8]
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    svg_path = config.OUTPUT_DIR / f"ink_{file_id}.svg"
+
+    dwg = svgwrite.Drawing(
+        str(svg_path),
+        size=(f"{pw}mm", f"{ph}mm"),
+        viewBox=f"0 0 {pw} {ph}",
+    )
+
+    for batch in _ink_strokes:
+        if len(batch) < 2:
+            continue
+        # Wacom coords: 21600 x 14700 → page mm, flip Y
+        pts = []
+        for pt in batch:
+            if len(pt) >= 2:
+                x = round(pt[0] / 21600 * pw, 3)
+                y = round((14700 - pt[1]) / 14700 * ph, 3)
+                pts.append((x, y))
+        if len(pts) >= 2:
+            dwg.add(dwg.polyline(pts, stroke="black", fill="none", stroke_width=0.5))
+
+    dwg.save()
+    uploaded_svgs[file_id] = str(svg_path)
+    _ink_strokes.clear()
+    _slate_process = None
+
+    return jsonify({"id": file_id, "stroke_count": stroke_count})
+
+
+@app.route("/api/ink/status", methods=["GET"])
+def ink_status():
+    """Return current capture status."""
+    capturing = _slate_process is not None and _slate_process.poll() is None
+    pid = _slate_process.pid if _slate_process else None
+    return jsonify({"capturing": capturing, "pid": pid})
+
+
+@app.route("/api/ink/sync", methods=["POST"])
+def ink_sync():
+    """Spawn sync.py to download stored pages from Wacom device."""
+    proc = subprocess.Popen(
+        ["python", "sync.py"],
+        cwd=PENZ_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    return jsonify({"ok": True, "pid": proc.pid})
+
+
+@app.route("/api/ink/pages", methods=["GET"])
+def ink_pages():
+    """List synced SVG pages from penz/data/pages/."""
+    pages_dir = os.path.join(PENZ_DIR, "data", "pages")
+    if not os.path.isdir(pages_dir):
+        return jsonify({"pages": []})
+    files = sorted(
+        [f for f in os.listdir(pages_dir) if f.endswith(".svg")],
+        reverse=True,
+    )
+    return jsonify({"pages": files})
+
+
+@app.route("/api/ink/load-page", methods=["POST"])
+def ink_load_page():
+    """Copy a synced SVG page to the plotter output dir and register it."""
+    data = request.json or {}
+    filename = data.get("filename", "")
+    if not filename:
+        return jsonify({"error": "filename required"}), 400
+
+    src = os.path.join(PENZ_DIR, "data", "pages", filename)
+    if not os.path.isfile(src):
+        return jsonify({"error": "Page not found"}), 404
+
+    file_id = uuid.uuid4().hex[:8]
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    dst = config.OUTPUT_DIR / f"ink_{file_id}.svg"
+    shutil.copy2(src, str(dst))
+
+    uploaded_svgs[file_id] = str(dst)
+
+    # Count strokes
+    try:
+        polylines = gcode.parse_svg(str(dst))
+        if not polylines:
+            return jsonify({"id": file_id, "stroke_count": 0, "warning": "Page has no strokes"})
+        return jsonify({"id": file_id, "stroke_count": len(polylines)})
+    except Exception:
+        return jsonify({"id": file_id, "stroke_count": 0, "warning": "Could not parse page"})
 
 
 # ── Print ────────────────────────────────────────────────────────────

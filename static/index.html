@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plotter Control</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
     <div class="app-layout">
@@ -66,6 +66,18 @@
                 <div class="nav-item" data-panel="log" title="Serial Log">
                     <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
                     <span>Log</span>
+                </div>
+                <div class="nav-item" data-panel="scriptorium" title="Scriptorium">
+                    <svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+                    <span>Script</span>
+                </div>
+                <div class="nav-item" data-panel="toon" title="Toon Tracer">
+                    <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+                    <span>Toon</span>
+                </div>
+                <div class="nav-item" data-panel="ink" title="Hand Writing">
+                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                    <span>Ink</span>
                 </div>
                 <div class="nav-spacer"></div>
             </nav>
@@ -505,12 +517,349 @@
                 </div>
             </div>
 
+            <!-- Panel: Scriptorium -->
+            <div class="panel-content" id="panel-scriptorium">
+                <div class="scriptorium-layout">
+                    <div class="scriptorium-preview">
+                        <div class="panel">
+                            <h3 class="panel-title">Live Preview</h3>
+                            <div class="scriptorium-canvas-wrap">
+                                <div id="scriptorium-svg-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="scriptorium-controls">
+                        <!-- Page Size -->
+                        <section class="panel">
+                            <h3 class="panel-title">Page</h3>
+                            <div class="convert-row">
+                                <label>Preset</label>
+                                <select id="sc-page-preset" class="input-select">
+                                    <option value="220mm">220 x 220 mm</option>
+                                    <option value="A4" selected>A4 (210 x 297)</option>
+                                    <option value="A5">A5 (148 x 210)</option>
+                                    <option value="Letter">Letter (216 x 279)</option>
+                                    <option value="4x6">4" x 6" (102 x 152)</option>
+                                    <option value="5x7">5" x 7" (127 x 178)</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="convert-row page-dims" id="sc-page-dims">
+                                <input type="number" id="sc-page-width" class="input-field" value="210" step="1"> x
+                                <input type="number" id="sc-page-height" class="input-field" value="297" step="1"> mm
+                            </div>
+                        </section>
+
+                        <!-- Border -->
+                        <section class="panel">
+                            <h3 class="panel-title">Border</h3>
+                            <div class="convert-row">
+                                <label>Style</label>
+                                <select id="sc-border-style" class="input-select">
+                                    <option value="knotwork">Celtic Knotwork</option>
+                                    <option value="vine">Vine & Foliage</option>
+                                    <option value="geometric">Geometric Interlace</option>
+                                    <option value="arch">Romanesque Arch</option>
+                                    <option value="double">Double Rule + Corners</option>
+                                </select>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Weight</span>
+                                <input type="range" class="transform-slider" id="sc-border-weight" min="1" max="5" step="0.5" value="2">
+                                <span class="transform-val" id="sc-border-weight-val">2</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Margin</span>
+                                <input type="range" class="transform-slider" id="sc-margin" min="8" max="25" value="14">
+                                <span class="transform-val" id="sc-margin-val">14</span>
+                            </div>
+                        </section>
+
+                        <!-- Ink -->
+                        <section class="panel">
+                            <h3 class="panel-title">Ink Colour</h3>
+                            <div class="sc-color-row" id="sc-ink-swatches">
+                                <div class="sc-color-swatch active" style="background:#1a0f08" data-color="#1a0f08" title="Iron Gall"></div>
+                                <div class="sc-color-swatch" style="background:#2c1a00" data-color="#2c1a00" title="Sepia"></div>
+                                <div class="sc-color-swatch" style="background:#0d1a0d" data-color="#0d1a0d" title="Verdigris"></div>
+                                <div class="sc-color-swatch" style="background:#1a0000" data-color="#1a0000" title="Carmine"></div>
+                                <div class="sc-color-swatch" style="background:#000814" data-color="#000814" title="Azure"></div>
+                                <div class="sc-color-swatch" style="background:#1a1200" data-color="#1a1200" title="Ochre"></div>
+                            </div>
+                        </section>
+
+                        <!-- Title -->
+                        <section class="panel">
+                            <h3 class="panel-title">Title</h3>
+                            <div class="convert-row">
+                                <input type="text" id="sc-title-text" class="input-field" value="Codex Mundi">
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Size</span>
+                                <input type="range" class="transform-slider" id="sc-title-size" min="12" max="48" value="28">
+                                <span class="transform-val" id="sc-title-size-val">28</span>
+                            </div>
+                            <div class="convert-row">
+                                <label>Font</label>
+                                <select id="sc-title-font" class="input-select">
+                                    <option value="UnifrakturMaguntia">Fraktur (Blackletter)</option>
+                                    <option value="'Cinzel Decorative', serif">Cinzel Decorative</option>
+                                    <option value="'Cinzel', serif">Cinzel</option>
+                                    <option value="'IM Fell English', serif">IM Fell (Roman)</option>
+                                </select>
+                            </div>
+                        </section>
+
+                        <!-- Body -->
+                        <section class="panel">
+                            <h3 class="panel-title">Body Text</h3>
+                            <div class="convert-row">
+                                <label>Drop cap letter</label>
+                                <input type="text" id="sc-drop-cap" class="input-field" value="H" maxlength="1">
+                            </div>
+                            <div class="convert-row">
+                                <textarea id="sc-body-text" class="input-field" style="min-height:80px;resize:vertical">ere beginneth the chronicle of the Ancient Realm, wherein are set down the deeds of kings and the wisdom of ages past. Let all who read these words take heed, for the truth herein contained hath been gathered from the four corners of the known world.
+
+In the year of our Lord when the great oak of Thornwood fell, so too did the last of the old kingdoms pass into memory. Yet their wisdom endureth still, written upon these pages by faithful hands.</textarea>
+                            </div>
+                            <div class="convert-row">
+                                <label>Body font</label>
+                                <select id="sc-body-font" class="input-select">
+                                    <option value="'IM Fell English', serif" selected>IM Fell (Humanist)</option>
+                                    <option value="UnifrakturMaguntia">Fraktur</option>
+                                    <option value="'Cinzel', serif">Cinzel</option>
+                                </select>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Body size</span>
+                                <input type="range" class="transform-slider" id="sc-body-size" min="9" max="18" value="12">
+                                <span class="transform-val" id="sc-body-size-val">12</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Cap size</span>
+                                <input type="range" class="transform-slider" id="sc-drop-cap-size" min="40" max="100" value="64">
+                                <span class="transform-val" id="sc-drop-cap-size-val">64</span>
+                            </div>
+                        </section>
+
+                        <!-- Decoration -->
+                        <section class="panel">
+                            <h3 class="panel-title">Decoration</h3>
+                            <label class="check-label"><input type="checkbox" id="sc-show-illumination" checked> Corner illuminations</label>
+                            <label class="check-label"><input type="checkbox" id="sc-show-ruled" checked> Ruled lines</label>
+                            <label class="check-label"><input type="checkbox" id="sc-show-footer" checked> Footer flourish</label>
+                            <div class="convert-row" style="margin-top:6px">
+                                <label>Folio number</label>
+                                <input type="text" id="sc-folio" class="input-field" value="XXIII">
+                            </div>
+                        </section>
+
+                        <!-- Export -->
+                        <section class="panel">
+                            <h3 class="panel-title">Export</h3>
+                            <button id="sc-send-to-plotter" class="btn btn-primary btn-block">Send to Plotter</button>
+                            <button id="sc-download-svg" class="btn btn-outline btn-block" style="margin-top:6px">Download SVG</button>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel: Toon Tracer -->
+            <div class="panel-content" id="panel-toon">
+                <div class="toon-layout">
+                    <div class="toon-preview">
+                        <section class="panel">
+                            <h3 class="panel-title">
+                                Trace Preview
+                                <span class="panel-badge" id="toon-trace-info"></span>
+                            </h3>
+                            <div class="toon-drop-area">
+                                <div id="toon-drop-zone" class="drop-zone">
+                                    <div class="drop-zone-content">
+                                        <div class="drop-icon">&#9993;</div>
+                                        <div>Drop image here or click to browse</div>
+                                        <div style="font-size:10px;color:var(--text-3);margin-top:4px">PNG, JPG, BMP, GIF, WEBP</div>
+                                    </div>
+                                    <input type="file" id="toon-image-input" accept=".png,.jpg,.jpeg,.bmp,.gif,.webp" hidden>
+                                </div>
+                                <div class="toon-canvas-wrap">
+                                    <canvas id="toon-canvas" width="600" height="600"></canvas>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="toon-controls">
+                        <!-- Page Size -->
+                        <section class="panel">
+                            <h3 class="panel-title">Page</h3>
+                            <div class="convert-row">
+                                <label>Preset</label>
+                                <select id="toon-page-preset" class="input-select">
+                                    <option value="220mm" selected>220 x 220 mm</option>
+                                    <option value="A4">A4 (210 x 297)</option>
+                                    <option value="A5">A5 (148 x 210)</option>
+                                    <option value="Letter">Letter (216 x 279)</option>
+                                    <option value="4x6">4" x 6" (102 x 152)</option>
+                                    <option value="5x7">5" x 7" (127 x 178)</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="convert-row page-dims">
+                                <input type="number" id="toon-page-width" class="input-field" value="220" step="1"> x
+                                <input type="number" id="toon-page-height" class="input-field" value="220" step="1"> mm
+                            </div>
+                        </section>
+
+                        <!-- Edge Detection -->
+                        <section class="panel">
+                            <h3 class="panel-title">Edge Detection</h3>
+                            <div class="transform-row">
+                                <span class="transform-label">Canny Low</span>
+                                <input type="range" class="transform-slider" id="toon-canny-low" min="10" max="200" value="50">
+                                <span class="transform-val" id="toon-canny-low-val">50</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Canny High</span>
+                                <input type="range" class="transform-slider" id="toon-canny-high" min="50" max="400" value="150">
+                                <span class="transform-val" id="toon-canny-high-val">150</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Blur</span>
+                                <input type="range" class="transform-slider" id="toon-blur" min="1" max="25" value="9">
+                                <span class="transform-val" id="toon-blur-val">9</span>
+                            </div>
+                        </section>
+
+                        <!-- Simplification -->
+                        <section class="panel">
+                            <h3 class="panel-title">Simplification</h3>
+                            <div class="transform-row">
+                                <span class="transform-label">Posterize</span>
+                                <input type="range" class="transform-slider" id="toon-posterize" min="0" max="24" value="8">
+                                <span class="transform-val" id="toon-posterize-val">8</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Epsilon</span>
+                                <input type="range" class="transform-slider" id="toon-epsilon" min="0.5" max="10" step="0.5" value="1.5">
+                                <span class="transform-val" id="toon-epsilon-val">1.5</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Min Len</span>
+                                <input type="range" class="transform-slider" id="toon-min-len" min="2" max="50" value="10">
+                                <span class="transform-val" id="toon-min-len-val">10</span>
+                            </div>
+                            <label class="check-label" style="margin-top:4px"><input type="checkbox" id="toon-invert"> Invert (light-on-dark)</label>
+                        </section>
+
+                        <!-- Trace -->
+                        <section class="panel">
+                            <h3 class="panel-title">Trace</h3>
+                            <button id="btn-toon-trace" class="btn btn-primary btn-block" disabled>Trace Image</button>
+                            <button id="btn-toon-retrace" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Re-trace</button>
+                        </section>
+
+                        <!-- Export -->
+                        <section class="panel">
+                            <h3 class="panel-title">Export</h3>
+                            <button id="btn-toon-send" class="btn btn-primary btn-block" disabled>Send to Plotter</button>
+                            <button id="btn-toon-download" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Download SVG</button>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel: Ink (Hand Writing) -->
+            <div class="panel-content" id="panel-ink">
+                <div class="ink-layout">
+                    <div class="ink-canvas-area">
+                        <section class="panel" style="height:100%;display:flex;flex-direction:column">
+                            <h3 class="panel-title">
+                                Drawing Pad
+                                <span class="panel-badge" id="ink-stroke-info"></span>
+                            </h3>
+                            <div class="ink-canvas-wrap">
+                                <canvas id="ink-canvas"></canvas>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="ink-controls">
+                        <!-- Page Size -->
+                        <section class="panel">
+                            <h3 class="panel-title">Page</h3>
+                            <div class="convert-row">
+                                <label>Preset</label>
+                                <select id="ink-page-preset" class="input-select">
+                                    <option value="220mm" selected>220 x 220 mm</option>
+                                    <option value="A4">A4 (210 x 297)</option>
+                                    <option value="A5">A5 (148 x 210)</option>
+                                    <option value="Letter">Letter (216 x 279)</option>
+                                    <option value="4x6">4" x 6" (102 x 152)</option>
+                                    <option value="5x7">5" x 7" (127 x 178)</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="convert-row page-dims">
+                                <input type="number" id="ink-page-width" class="input-field" value="220" step="1"> x
+                                <input type="number" id="ink-page-height" class="input-field" value="220" step="1"> mm
+                            </div>
+                        </section>
+
+                        <!-- Pen -->
+                        <section class="panel">
+                            <h3 class="panel-title">Pen</h3>
+                            <div class="transform-row">
+                                <span class="transform-label">Width</span>
+                                <input type="range" class="transform-slider" id="ink-stroke-width" min="0.2" max="3" step="0.1" value="0.5">
+                                <span class="transform-val" id="ink-stroke-width-val">0.5</span>
+                            </div>
+                            <div class="transform-row">
+                                <span class="transform-label">Smoothing</span>
+                                <input type="range" class="transform-slider" id="ink-smoothing" min="0" max="5" step="1" value="2">
+                                <span class="transform-val" id="ink-smoothing-val">2</span>
+                            </div>
+                            <label class="check-label" style="margin-top:4px"><input type="checkbox" id="ink-pressure" checked> Pressure sensitive</label>
+                        </section>
+
+                        <!-- Slate -->
+                        <section class="panel">
+                            <h3 class="panel-title">Wacom Slate</h3>
+                            <div id="slate-status" class="upload-info" style="margin-bottom:6px">
+                                <span style="color:var(--text-2)">Disconnected</span>
+                            </div>
+                            <button id="btn-slate-connect" class="btn btn-primary btn-block">Connect & Capture</button>
+                            <button id="btn-slate-stop" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Stop & Save</button>
+                            <div style="display:flex;gap:6px;margin-top:6px">
+                                <button id="btn-slate-sync" class="btn btn-outline" style="flex:1">Sync Pages</button>
+                                <button id="btn-slate-load" class="btn btn-outline" style="flex:1" disabled>Load Page</button>
+                            </div>
+                            <select id="slate-pages-select" class="input-select" style="margin-top:6px;display:none"></select>
+                        </section>
+
+                        <!-- Strokes -->
+                        <section class="panel">
+                            <h3 class="panel-title">Strokes</h3>
+                            <div style="display:flex;gap:6px">
+                                <button id="btn-ink-undo" class="btn btn-outline" style="flex:1" disabled>Undo</button>
+                                <button id="btn-ink-clear" class="btn btn-outline" style="flex:1" disabled>Clear</button>
+                            </div>
+                        </section>
+
+                        <!-- Export -->
+                        <section class="panel">
+                            <h3 class="panel-title">Export</h3>
+                            <button id="btn-ink-send" class="btn btn-primary btn-block" disabled>Send to Plotter</button>
+                            <button id="btn-ink-download" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Download SVG</button>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>

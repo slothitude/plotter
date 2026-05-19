@@ -1,6 +1,6 @@
 /* ─── Plotter Control — Orbitron + JetBrains Mono Theme ─── */
 
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=UnifrakturMaguntia&family=Cinzel+Decorative:wght@400;700&family=Cinzel:wght@400;600&family=IM+Fell+English:ital@0;1&display=swap');
 
 :root {
     --ink: #e8ecf1;
@@ -1297,5 +1297,195 @@ body {
     }
     .nav-item span {
         display: none;
+    }
+}
+
+/* ─── Scriptorium Panel ─── */
+
+.scriptorium-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 16px;
+    max-width: 1300px;
+}
+
+.scriptorium-preview {
+    min-width: 0;
+}
+
+.scriptorium-canvas-wrap {
+    background: #fdf8ef;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: auto;
+    max-height: calc(100vh - 200px);
+    display: flex;
+    justify-content: center;
+    padding: 16px;
+}
+
+#scriptorium-svg-container svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+}
+
+.scriptorium-controls {
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+}
+
+.scriptorium-controls::-webkit-scrollbar {
+    width: 4px;
+}
+
+.scriptorium-controls::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+/* Color swatches */
+.sc-color-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 6px 0;
+}
+
+.sc-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: border-color 0.15s;
+}
+
+.sc-color-swatch:hover {
+    opacity: 0.8;
+}
+
+.sc-color-swatch.active {
+    border-color: var(--green);
+    box-shadow: 0 0 6px var(--green-dim);
+}
+
+/* Textarea in scriptorium */
+.scriptorium-controls textarea.input-field {
+    font-family: 'IM Fell English', serif;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+    .scriptorium-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ─── Toon Tracer Panel ─── */
+
+.toon-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 16px;
+    max-width: 1300px;
+}
+
+.toon-preview {
+    min-width: 0;
+}
+
+.toon-drop-area {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.toon-canvas-wrap {
+    background: var(--base-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+}
+
+#toon-canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.toon-controls {
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+}
+
+.toon-controls::-webkit-scrollbar {
+    width: 4px;
+}
+
+.toon-controls::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+@media (max-width: 1100px) {
+    .toon-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ─── Ink (Hand Writing) Panel ─── */
+
+.ink-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 16px;
+    max-width: 1300px;
+}
+
+.ink-canvas-area {
+    min-width: 0;
+}
+
+.ink-canvas-wrap {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px;
+    background: var(--base-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+#ink-canvas {
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+    background: #0a0c10;
+}
+
+.ink-controls {
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+}
+
+.ink-controls::-webkit-scrollbar {
+    width: 4px;
+}
+
+.ink-controls::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+@media (max-width: 1100px) {
+    .ink-layout {
+        grid-template-columns: 1fr;
     }
 }
