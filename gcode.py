@@ -674,27 +674,37 @@ def polylines_to_gcode(
     svg_w = max_x - min_x
     svg_h = max_y - min_y
 
-    # Compute pen offset correction and effective drawing area
+    # Compute pen offset correction using physical bed dimensions
     pen_raw_ox = ht.offset_x
     pen_raw_oy = ht.offset_y
+    phys_bed_x = config.PRINTER_BED_X
+    phys_bed_y = config.PRINTER_BED_Y
 
     if pen_raw_ox == 0.0 and pen_raw_oy == 0.0:
-        # No offset — full bed available
-        pen_cx, pen_cy = 0.0, 0.0
-        eff_w, eff_h = bed_x, bed_y
-        eff_ox, eff_oy = 0.0, 0.0
+        # No offset — full page available, centered on bed
+        pen_phys_x, pen_phys_y = 0.0, 0.0
     else:
-        # Correction: stored_offset - center
-        pen_cx = pen_raw_ox - bed_x / 2
-        pen_cy = pen_raw_oy - bed_y / 2
-        # Physical pen position relative to hotend
-        pen_phys_x = -pen_cx
-        pen_phys_y = -pen_cy
-        # Effective area: where the pen can actually reach on the bed
-        eff_ox = max(0.0, pen_phys_x)
-        eff_oy = max(0.0, pen_phys_y)
-        eff_w = min(bed_x, bed_x + pen_phys_x) - eff_ox
-        eff_h = min(bed_y, bed_y + pen_phys_y) - eff_oy
+        # Pen center relative to physical bed center
+        pen_phys_x = -(pen_raw_ox - phys_bed_x / 2)
+        pen_phys_y = -(pen_raw_oy - phys_bed_y / 2)
+
+    # Pen can physically reach: [pen_phys, pen_phys + bed_size]
+    pen_reach_x0 = max(0.0, pen_phys_x)
+    pen_reach_y0 = max(0.0, pen_phys_y)
+    pen_reach_x1 = min(phys_bed_x, phys_bed_x + pen_phys_x)
+    pen_reach_y1 = min(phys_bed_y, phys_bed_y + pen_phys_y)
+
+    # Page area centered on physical bed
+    page_ox = (phys_bed_x - bed_x) / 2
+    page_oy = (phys_bed_y - bed_y) / 2
+
+    # Effective area: intersection of page and pen-reachable area
+    eff_ox = max(page_ox, pen_reach_x0)
+    eff_oy = max(page_oy, pen_reach_y0)
+    eff_end_x = min(page_ox + bed_x, pen_reach_x1)
+    eff_end_y = min(page_oy + bed_y, pen_reach_y1)
+    eff_w = eff_end_x - eff_ox
+    eff_h = eff_end_y - eff_oy
 
     margin = 10.0
     available = eff_w - 2 * margin, eff_h - 2 * margin
@@ -705,11 +715,9 @@ def polylines_to_gcode(
 
     scaled_w = svg_w * scale
     scaled_h = svg_h * scale
-    # Center page area on physical bed
-    page_center_ox = (config.PRINTER_BED_X - bed_x) / 2
-    page_center_oy = (config.PRINTER_BED_Y - bed_y) / 2
-    offset_x = eff_ox + page_center_ox + (eff_w - scaled_w) / 2 - min_x * scale
-    offset_y = eff_oy + page_center_oy + (eff_h - scaled_h) / 2 - min_y * scale
+    # Center drawing within effective area
+    offset_x = eff_ox + (eff_w - scaled_w) / 2 - min_x * scale
+    offset_y = eff_oy + (eff_h - scaled_h) / 2 - min_y * scale
 
     def transform(px, py):
         return (round(px * scale + offset_x + page_offset_x, 3),
