@@ -138,7 +138,10 @@ def index():
 
 @app.route("/<path:path>")
 def static_files(path):
-    return send_from_directory("static", path)
+    resp = send_from_directory("static", path)
+    if path.endswith(".js"):
+        resp.headers["Content-Type"] = "text/javascript; charset=utf-8"
+    return resp
 
 
 # ── Serial ───────────────────────────────────────────────────────────

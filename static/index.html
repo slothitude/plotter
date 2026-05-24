@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plotter Control</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
     <div class="app-layout">
@@ -15,6 +15,7 @@
                 <svg class="brand-icon" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                 <span class="brand-name">PLOTTER<span class="brand-accent">CTRL</span></span>
             </div>
+
             <div class="top-conn">
                 <select id="port-select" class="input-select">
                     <option value="">-- Port --</option>
@@ -22,849 +23,489 @@
                 <button id="btn-connect" class="btn btn-connect">CONNECT</button>
                 <span id="conn-status" class="conn-badge disconnected">OFFLINE</span>
             </div>
+
             <div class="top-pos">
                 <span class="pos-label">X</span><span class="pos-val" id="pos-x">0.000</span>
                 <span class="pos-label">Y</span><span class="pos-val" id="pos-y">0.000</span>
                 <span class="pos-label">Z</span><span class="pos-val" id="pos-z">0.000</span>
             </div>
-            <div class="top-jog">
-                <select id="jog-step" class="input-select jog-step-sel">
+
+            <div class="top-actions">
+                <select id="jog-step" class="input-select" style="width:60px">
                     <option value="1">1mm</option>
                     <option value="10" selected>10mm</option>
                     <option value="0.1">0.1mm</option>
                     <option value="50">50mm</option>
                 </select>
-                <button class="btn btn-jog-sm" data-axis="Y" data-dir="1">Y+</button>
-                <button class="btn btn-jog-sm" data-axis="Y" data-dir="-1">Y-</button>
-                <button class="btn btn-jog-sm" data-axis="X" data-dir="-1">X-</button>
-                <button class="btn btn-jog-sm" data-axis="X" data-dir="1">X+</button>
-                <span class="jog-sep"></span>
-                <button class="btn btn-jog-sm" data-axis="Z" data-dir="-1">Z-</button>
-                <button class="btn btn-jog-sm" data-axis="Z" data-dir="1">Z+</button>
+                <button class="btn btn-outline btn-sm btn-jog" data-axis="X" data-dir="-1">&#9664;</button>
+                <button class="btn btn-outline btn-sm btn-jog" data-axis="Y" data-dir="1">&#9650;</button>
+                <button class="btn btn-outline btn-sm btn-jog" data-axis="Y" data-dir="-1">&#9660;</button>
+                <button class="btn btn-outline btn-sm btn-jog" data-axis="X" data-dir="1">&#9654;</button>
+                <button id="btn-home" class="btn btn-outline btn-sm">HOME</button>
+                <button id="btn-estop" class="btn btn-estop btn-sm">STOP</button>
             </div>
-            <button id="btn-home" class="btn btn-outline btn-sm">Home</button>
-            <button id="btn-estop" class="btn-estop-sm">E-STOP</button>
+
+            <div class="top-tool">
+                <button class="tool-btn active" data-tool="pencil">Pencil</button>
+                <button class="tool-btn" data-tool="pen">Pen</button>
+                <button class="tool-btn" data-tool="watercolor">Water</button>
+            </div>
         </header>
 
-        <!-- MAIN: Side Nav + Content -->
+        <!-- MAIN CONTENT -->
         <div class="main-content">
 
-            <!-- Side Navigation -->
-            <nav class="side-nav">
-                <div class="nav-item active" data-panel="plot" title="Plot">
-                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                    <span>Plot</span>
+            <!-- LEFT SIDEBAR -->
+            <nav class="sidebar">
+                <div id="step-list" class="step-list">
+                    <!-- Populated by router.js -->
                 </div>
-                <div class="nav-item" data-panel="calibration" title="Calibrate">
-                    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                    <span>Cal</span>
+                <div class="sidebar-bottom">
+                    <button id="log-toggle" class="btn btn-outline btn-sm" style="width:100%">LOG</button>
                 </div>
-                <div class="nav-item" data-panel="settings" title="Settings">
-                    <svg viewBox="0 0 24 24"><path d="M19.14 12.94a7.07 7.07 0 000-1.88l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.04 7.04 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.48.48 0 00.12.61l2.03 1.58a7.07 7.07 0 000 1.88l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.49.37 1.03.7 1.62.94l.36 2.54c.05.24.26.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
-                    <span>Set</span>
-                </div>
-                <div class="nav-item" data-panel="log" title="Serial Log">
-                    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
-                    <span>Log</span>
-                </div>
-                <div class="nav-item" data-panel="scriptorium" title="Scriptorium">
-                    <svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
-                    <span>Script</span>
-                </div>
-                <div class="nav-item" data-panel="toon" title="Toon Tracer">
-                    <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-                    <span>Toon</span>
-                </div>
-                <div class="nav-item" data-panel="ink" title="Hand Writing">
-                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                    <span>Ink</span>
-                </div>
-                <div class="nav-spacer"></div>
             </nav>
 
-            <!-- Panel: Plot -->
-            <div class="panel-content active" id="panel-plot">
-                <div class="plot-layout">
-                    <div class="plot-left">
-                        <!-- Upload -->
-                        <section class="panel">
-                            <h3 class="panel-title">SVG Upload</h3>
-                            <div id="drop-zone" class="drop-zone">
-                                <div class="drop-zone-content">
-                                    <div class="drop-icon">⬆</div>
-                                    <div>Drop SVG here or click to browse</div>
-                                </div>
-                                <input type="file" id="svg-input" accept=".svg" hidden>
-                            </div>
-                            <div id="upload-info" class="upload-info hidden"></div>
-                        </section>
+            <!-- VIEWPORT -->
+            <div class="viewport">
+                <div class="viewport-content">
 
-                        <!-- Canvas Preview -->
-                        <section class="panel">
-                            <h3 class="panel-title">
-                                Preview
-                                <span class="panel-badge" id="preview-info"></span>
-                            </h3>
-                            <div class="canvas-container">
-                                <div class="canvas-overlay">
-                                    <button class="btn-overlay active" id="btn-show-draw" title="Show draws">✎</button>
-                                    <button class="btn-overlay" id="btn-show-travel" title="Show travel moves">⋯</button>
-                                    <button class="btn-overlay active" id="btn-show-grid" title="Show grid">#</button>
-                                    <button class="btn-overlay" id="btn-zoom-fit" title="Zoom to fit">⊞</button>
-                                </div>
-                                <canvas id="preview-canvas" width="500" height="500"></canvas>
-                                <div class="canvas-info">
-                                    <div>
-                                        <span class="stat">Strokes: <span class="stat-val" id="stat-strokes">--</span></span>
-                                        <span class="stat">Draw: <span class="stat-val" id="stat-draw">--</span></span>
-                                        <span class="stat">Travel: <span class="stat-val" id="stat-travel">--</span></span>
-                                        <span class="stat">Time: <span class="stat-val" id="stat-time">--</span></span>
-                                    </div>
-                                    <div>
-                                        Cursor: <span id="cursor-pos">--</span>
-                                    </div>
+                    <!-- STEP 1: SETUP -->
+                    <div id="step-1" class="step-panel">
+                        <div class="split-layout">
+                            <div class="split-canvas">
+                                <div class="canvas-container" id="setup-canvas-container">
+                                    <canvas id="setup-canvas"></canvas>
                                 </div>
                             </div>
-                        </section>
+                            <div class="split-controls">
+                                <!-- Calibration -->
+                                <div class="card">
+                                    <div class="card-title">Calibration</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Tool</label>
+                                        <select id="cal-tool" class="input-select">
+                                            <option value="pencil">Pencil</option>
+                                            <option value="pen">Pen</option>
+                                            <option value="watercolor">Watercolor</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <button id="btn-cal-start" class="btn btn-primary btn-sm">Start</button>
+                                        <button id="btn-cal-pen-loaded" class="btn btn-outline btn-sm">Pen Loaded</button>
+                                        <button id="btn-cal-test-dot" class="btn btn-outline btn-sm">Test Dot</button>
+                                    </div>
+                                    <div class="form-row mt-md">
+                                        <label class="form-label">Z Position</label>
+                                        <span class="cal-z-value" id="cal-z-display">0.000</span>
+                                    </div>
+                                    <div class="cal-z-buttons mt-sm">
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="-1">-1.0</button>
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="-0.1">-0.1</button>
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="-0.01">-0.01</button>
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="0.01">+0.01</button>
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="0.1">+0.1</button>
+                                        <button class="btn btn-outline btn-sm btn-z-step" data-delta="1">+1.0</button>
+                                    </div>
+                                    <button id="btn-cal-save" class="btn btn-primary btn-sm mt-md">Save Z</button>
 
-                        <!-- G-code Drawer -->
-                        <div class="gcode-drawer" id="gcode-drawer">
-                            <div class="gcode-drawer-header" id="gcode-drawer-toggle">
-                                <span style="font-family:var(--font-display);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--text-2)">
-                                    G-code <span class="panel-badge" id="gcode-lines"></span>
-                                </span>
-                                <span class="gcode-drawer-toggle">▼</span>
-                            </div>
-                            <div class="gcode-drawer-body">
-                                <pre id="gcode-preview" class="gcode-preview">No G-code generated yet.</pre>
-                                <div class="gcode-actions">
-                                    <button id="btn-download-gcode" class="btn btn-outline btn-sm" disabled>Download .gcode</button>
+                                    <!-- Pen offset -->
+                                    <div class="card-title mt-lg">Pen Offset</div>
+                                    <div class="form-row">
+                                        <label class="form-label">X</label>
+                                        <input type="number" id="cal-offset-x" class="input-field" value="0" step="0.1">
+                                        <span class="unit">mm</span>
+                                        <label class="form-label" style="margin-left:8px">Y</label>
+                                        <input type="number" id="cal-offset-y" class="input-field" value="0" step="0.1">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <button id="btn-cal-read-offset" class="btn btn-outline btn-sm">Read Current</button>
+                                        <button id="btn-cal-save-offset" class="btn btn-outline btn-sm">Save Offset</button>
+                                        <button id="btn-cal-clear-offset" class="btn btn-outline btn-sm">Clear</button>
+                                    </div>
+                                    <div id="effective-area-info" class="mt-sm" style="font-size:10px;color:var(--text-2)"></div>
+
+                                    <!-- Saved calibrations -->
+                                    <div id="cal-saved-list" class="mt-md"></div>
                                 </div>
+
+                                <!-- Page size -->
+                                <div class="card">
+                                    <div class="card-title">Page Size</div>
+                                    <div id="page-size-container"></div>
+                                </div>
+
+                                <!-- Bed Leveling -->
+                                <div class="card">
+                                    <div class="card-title">Bed Leveling</div>
+                                    <div class="flex-row gap-sm">
+                                        <button id="btn-bed-level" class="btn btn-primary btn-sm">Start</button>
+                                        <button id="btn-bed-repeat" class="btn btn-outline btn-sm hidden">Repeat</button>
+                                        <button id="btn-bed-next" class="btn btn-outline btn-sm hidden">Next Corner</button>
+                                        <button id="btn-bed-stop" class="btn btn-outline btn-sm hidden">Stop</button>
+                                    </div>
+                                    <div id="bed-level-status" class="mt-sm" style="font-size:10px;color:var(--text-2)"></div>
+                                </div>
+
+                                <!-- Mark Page -->
+                                <div class="card">
+                                    <div class="card-title">Mark Page</div>
+                                    <button id="btn-mark-page" class="btn btn-outline btn-sm">Draw Page Outline</button>
+                                </div>
+
+                                <button class="btn btn-continue" id="btn-setup-continue">Continue to Create &#8594;</button>
                             </div>
                         </div>
                     </div>
 
-                    <div class="plot-right">
-                        <!-- Page Size -->
-                        <section class="panel">
-                            <h3 class="panel-title">Page Size</h3>
-                            <div class="convert-row">
-                                <label>Preset</label>
-                                <select id="page-preset" class="input-select">
-                                    <option value="220mm">220 x 220 mm</option>
-                                    <option value="A4">A4 (210 x 297)</option>
-                                    <option value="A5">A5 (148 x 210)</option>
-                                    <option value="Letter">Letter (216 x 279)</option>
-                                    <option value="4x6">4" x 6" (102 x 152)</option>
-                                    <option value="5x7">5" x 7" (127 x 178)</option>
-                                    <option value="Custom">Custom</option>
-                                </select>
-                            </div>
-                            <div class="convert-row page-dims">
-                                <input type="number" id="page-width" class="input-field" value="220" step="1"> x
-                                <input type="number" id="page-height" class="input-field" value="220" step="1"> mm
-                            </div>
-                            <div class="convert-row">
-                                <label>Offset</label>
-                                <div class="page-dims">
-                                    X <input type="number" id="page-offset-x" class="input-field" value="0" step="1"> Y
-                                    <input type="number" id="page-offset-y" class="input-field" value="0" step="1"> mm
+                    <!-- STEP 2: CREATE -->
+                    <div id="step-2" class="step-panel">
+                        <div class="sub-tabs" id="create-tabs">
+                            <div class="sub-tab active" data-tab="upload">Upload</div>
+                            <div class="sub-tab" data-tab="patterns">Patterns</div>
+                            <div class="sub-tab" data-tab="trace">Trace</div>
+                            <div class="sub-tab" data-tab="draw">Draw</div>
+                            <div class="sub-tab" data-tab="write">Write</div>
+                        </div>
+                        <div class="split-layout">
+                            <div class="split-canvas">
+                                <div class="canvas-container" id="create-canvas-container">
+                                    <canvas id="create-canvas"></canvas>
+                                    <div class="canvas-overlay">
+                                        <button class="btn-overlay" id="btn-show-draw" title="Toggle draw paths">D</button>
+                                        <button class="btn-overlay" id="btn-show-travel" title="Toggle travel moves">T</button>
+                                        <button class="btn-overlay active" id="btn-show-grid" title="Toggle grid">G</button>
+                                    </div>
+                                    <div class="canvas-info">
+                                        <span id="create-stroke-count">0 strokes</span>
+                                    </div>
                                 </div>
                             </div>
-                            <button id="btn-mark-page" class="btn btn-outline btn-sm btn-block" style="margin-top:6px">Mark Page Outline</button>
-                        </section>
+                            <div class="split-controls">
+                                <!-- Upload sub-panel -->
+                                <div id="tab-upload" class="sub-panel active">
+                                    <div class="drop-zone" id="drop-zone">
+                                        <div class="drop-icon">&#128196;</div>
+                                        <div class="drop-text">Drop SVG file here or click to browse</div>
+                                    </div>
+                                    <input type="file" id="svg-input" accept=".svg" class="hidden">
+                                    <div id="upload-info" class="upload-info hidden"></div>
+                                </div>
 
-                        <!-- Tool & Convert -->
-                        <section class="panel">
-                            <h3 class="panel-title">Convert</h3>
-                            <div class="tool-tabs">
-                                <button class="tool-tab active" data-tool="pencil">Pencil</button>
-                                <button class="tool-tab" data-tool="pen">Pen</button>
-                                <button class="tool-tab" data-tool="watercolor">Watercolor</button>
-                            </div>
+                                <!-- Patterns sub-panel -->
+                                <div id="tab-patterns" class="sub-panel">
+                                    <div class="card-title">Test Patterns</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Size</label>
+                                        <input type="number" id="test-size" class="input-field" value="80">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                    <div class="test-grid" id="test-patterns-grid">
+                                        <button class="btn btn-outline btn-sm" data-pattern="grid">Grid</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="circles">Circles</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="crosshatch">Crosshatch</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="star">Star</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="spiral">Spiral</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="wave">Wave</button>
+                                    </div>
+                                    <div class="test-text-row">
+                                        <input type="text" id="test-text-value" value="Hello World" placeholder="Text pattern...">
+                                        <button id="btn-test-text" class="btn btn-outline btn-sm">Text</button>
+                                    </div>
+                                </div>
 
-                            <!-- Transform Controls -->
-                            <div class="transform-block">
-                                <div class="transform-row">
-                                    <span class="transform-label">Scale</span>
-                                    <input type="range" class="transform-slider" id="tf-scale" min="0.1" max="3" step="0.1" value="1">
-                                    <span class="transform-val" id="tf-scale-val">1.0</span>
+                                <!-- Trace sub-panel -->
+                                <div id="tab-trace" class="sub-panel">
+                                    <div class="card-title">Image Tracer</div>
+                                    <div class="toon-drop-area" id="toon-drop-area">
+                                        Drop image or click to browse
+                                    </div>
+                                    <input type="file" id="toon-input" accept="image/*" class="hidden">
+                                    <div class="form-row mt-md">
+                                        <label class="form-label">Threshold</label>
+                                        <input type="range" id="trace-threshold" min="0" max="255" value="128" class="transform-slider">
+                                        <span class="transform-val" id="trace-threshold-val">128</span>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Blur</label>
+                                        <input type="range" id="trace-blur" min="0" max="10" value="2" class="transform-slider">
+                                        <span class="transform-val" id="trace-blur-val">2</span>
+                                    </div>
+                                    <button id="btn-trace" class="btn btn-primary btn-sm mt-md">Trace Image</button>
+                                    <div id="trace-info" class="mt-sm" style="font-size:10px;color:var(--text-2)"></div>
                                 </div>
-                                <div class="transform-row">
-                                    <span class="transform-label">Rotate</span>
-                                    <input type="range" class="transform-slider" id="tf-rotate" min="0" max="360" step="1" value="0">
-                                    <span class="transform-val" id="tf-rotate-val">0°</span>
-                                </div>
-                                <div class="transform-row">
-                                    <span class="transform-label">Offset X</span>
-                                    <input type="range" class="transform-slider" id="tf-offset-x" min="-100" max="100" step="1" value="0">
-                                    <span class="transform-val" id="tf-offset-x-val">0</span>
-                                </div>
-                                <div class="transform-row">
-                                    <span class="transform-label">Offset Y</span>
-                                    <input type="range" class="transform-slider" id="tf-offset-y" min="-100" max="100" step="1" value="0">
-                                    <span class="transform-val" id="tf-offset-y-val">0</span>
-                                </div>
-                                <div class="transform-checks">
-                                    <label class="check-label"><input type="checkbox" id="tf-mirror-x"> Mirror X</label>
-                                    <label class="check-label"><input type="checkbox" id="tf-mirror-y"> Mirror Y</label>
-                                    <label class="check-label"><input type="checkbox" id="tf-optimize" checked> Optimize</label>
-                                    <label class="check-label"><input type="checkbox" id="tf-simplify"> Simplify</label>
-                                </div>
-                                <button id="btn-reset-transforms" class="btn btn-sm btn-reset">Reset</button>
-                            </div>
 
-                            <button id="btn-convert" class="btn btn-primary btn-block" disabled style="margin-top:12px">Convert SVG → G-code</button>
-                            <div id="convert-result" class="convert-result hidden"></div>
-                        </section>
-
-                        <!-- Test Patterns -->
-                        <section class="panel">
-                            <h3 class="panel-title">Test Patterns <span class="unit">size</span></h3>
-                            <div class="convert-row">
-                                <input type="number" id="test-size" class="input-field" value="80" step="5" min="10" max="200">
-                            </div>
-                            <div class="test-grid">
-                                <button class="btn btn-outline btn-sm" data-pattern="circle">Circle</button>
-                                <button class="btn btn-outline btn-sm" data-pattern="square">Square</button>
-                                <button class="btn btn-outline btn-sm" data-pattern="grid">Grid</button>
-                                <button class="btn btn-outline btn-sm" data-pattern="star">Star</button>
-                                <button class="btn btn-outline btn-sm" data-pattern="spiral">Spiral</button>
-                                <button class="btn btn-outline btn-sm" data-pattern="crosshair">Crosshair</button>
-                            </div>
-                            <div class="test-text-row">
-                                <input type="text" id="test-text-value" class="input-field" placeholder="Enter text..." value="Hello World">
-                                <button id="btn-test-text" class="btn btn-primary btn-sm">Text</button>
-                            </div>
-                        </section>
-
-                        <!-- Print -->
-                        <section class="panel">
-                            <h3 class="panel-title">Print</h3>
-                            <button id="btn-print" class="btn btn-primary btn-block" disabled>Start Plot</button>
-                            <div id="progress-container" class="progress-container hidden">
-                                <div class="progress-bar">
-                                    <div class="progress-fill" id="progress-fill"></div>
-                                </div>
-                                <div class="progress-text" id="progress-text">0%</div>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Panel: Calibration -->
-            <div class="panel-content" id="panel-calibration">
-                <div class="cal-layout">
-                    <div class="cal-main">
-                        <section class="panel">
-                            <h3 class="panel-title">Tool Calibration</h3>
-                            <p class="cal-desc">Calibrate the pen-down Z height for each tool. The nozzle must just touch the paper.</p>
-                            <div class="cal-controls">
-                                <div class="cal-row">
-                                    <label>Active Tool</label>
-                                    <select id="cal-tool" class="input-select">
-                                        <option value="pencil">Pencil</option>
-                                        <option value="pen">Pen</option>
-                                        <option value="watercolor">Watercolor</option>
-                                    </select>
-                                </div>
-                                <div class="cal-actions">
-                                    <button id="btn-cal-start" class="btn btn-primary">Start Calibration</button>
-                                    <button id="btn-cal-pen-loaded" class="btn btn-primary">Pen Loaded</button>
-                                    <button id="btn-cal-test-dot" class="btn btn-outline">Test Dot</button>
-                                </div>
-                                <div class="cal-bed-level">
-                                    <h4 class="cal-bed-level-title">Bed Leveling</h4>
-                                    <button id="btn-bed-level" class="btn btn-primary">Start Bed Level</button>
-                                    <div id="bed-level-controls" class="cal-bed-controls hidden">
-                                        <span id="bed-level-status" class="cal-bed-status">Corner 1/4: Front-Left</span>
-                                        <div class="cal-bed-actions">
-                                            <button id="btn-bed-repeat" class="btn btn-outline btn-sm">Repeat</button>
-                                            <button id="btn-bed-next" class="btn btn-primary btn-sm">Next Corner</button>
-                                            <button id="btn-bed-stop" class="btn btn-sm btn-bed-stop">Stop</button>
+                                <!-- Draw sub-panel -->
+                                <div id="tab-draw" class="sub-panel">
+                                    <div class="card-title">Freehand Drawing</div>
+                                    <div id="ink-canvas-area">
+                                        <div class="ink-canvas-wrap">
+                                            <canvas id="ink-canvas" width="500" height="500"></canvas>
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-                            <div class="cal-z-section">
-                                <div class="cal-z-header">
-                                    <span>Current Z Height</span>
-                                    <span class="cal-z-value" id="cal-z-display">--</span>
-                                </div>
-                                <div class="cal-z-buttons">
-                                    <button class="btn btn-z-step" data-delta="-1">▼ 1mm</button>
-                                    <button class="btn btn-z-step" data-delta="-0.1">▼ 0.1mm</button>
-                                    <button class="btn btn-z-step fine" data-delta="-0.01">▼ 0.01mm</button>
-                                    <button class="btn btn-z-step fine" data-delta="0.01">▲ 0.01mm</button>
-                                    <button class="btn btn-z-step" data-delta="0.1">▲ 0.1mm</button>
-                                    <button class="btn btn-z-step" data-delta="1">▲ 1mm</button>
-                                </div>
-                                <button id="btn-cal-save" class="btn btn-primary btn-block">Save Current Z as Pen-Down Height</button>
-                                <div class="cal-offset-section">
-                                    <div class="cal-offset-header">Pen XY Offset</div>
-                                    <p class="cal-desc">Distance from hotend to pen tip. Type directly or jog pen over bed center and click "Read Current".</p>
-                                    <div class="cal-offset-row">
-                                        <span class="cal-offset-val">X: <input type="number" id="cal-offset-x" class="input-field" style="width:70px" step="1"> mm</span>
-                                        <span class="cal-offset-val">Y: <input type="number" id="cal-offset-y" class="input-field" style="width:70px" step="1"> mm</span>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <label class="form-label">Brush</label>
+                                        <input type="range" id="ink-brush-size" min="1" max="20" value="3" class="transform-slider" style="width:80px">
                                     </div>
-                                    <div class="cal-offset-row" style="margin-top:6px">
-                                        <button id="btn-cal-read-offset" class="btn btn-outline btn-sm">Read Current</button>
-                                        <button id="btn-cal-save-offset" class="btn btn-primary btn-sm">Save Offset</button>
-                                        <button id="btn-cal-clear-offset" class="btn btn-sm btn-bed-stop">Clear</button>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <button id="btn-ink-undo" class="btn btn-outline btn-sm">Undo</button>
+                                        <button id="btn-ink-clear" class="btn btn-outline btn-sm">Clear</button>
+                                        <button id="btn-ink-to-plotter" class="btn btn-primary btn-sm">Send to Plotter</button>
                                     </div>
-                                    <div id="effective-area-info" class="cal-desc" style="display:none; margin-top:8px; color:#aaa;"></div>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
-                    <div class="cal-saved">
-                        <section class="panel">
-                            <h3 class="panel-title">Saved Calibrations</h3>
-                            <div id="cal-saved-list" class="cal-saved-list">
-                                <div class="cal-saved-item">No calibrations saved yet.</div>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Panel: Settings -->
-            <div class="panel-content" id="panel-settings">
-                <div class="settings-layout">
-                    <div class="settings-tabs">
-                        <button class="settings-tab active" data-settings-tool="pencil">Pencil</button>
-                        <button class="settings-tab" data-settings-tool="pen">Pen</button>
-                        <button class="settings-tab" data-settings-tool="watercolor">Watercolor</button>
-                    </div>
-                    <div class="settings-panels">
-                        <section class="panel">
-                            <h3 class="panel-title">Movement</h3>
-                            <div class="settings-grid">
-                                <div class="setting-field">
-                                    <label>Draw Speed <span class="unit">mm/min</span></label>
-                                    <input type="number" id="set-draw-speed" class="input-field" step="100">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Travel Speed <span class="unit">mm/min</span></label>
-                                    <input type="number" id="set-travel-speed" class="input-field" step="100">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Lift Height <span class="unit">mm</span></label>
-                                    <input type="number" id="set-lift-height" class="input-field" step="0.5">
-                                </div>
-                            </div>
-                        </section>
-                        <section class="panel">
-                            <h3 class="panel-title">Graphite Wear</h3>
-                            <div class="settings-grid">
-                                <div class="setting-field">
-                                    <label>Wear Rate <span class="unit">mm/m</span></label>
-                                    <input type="number" id="set-wear-rate" class="input-field" step="0.01" min="0">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Max Depth <span class="unit">mm</span></label>
-                                    <input type="number" id="set-wear-depth" class="input-field" step="0.1" min="0">
-                                </div>
-                            </div>
-                        </section>
-                        <section class="panel" id="water-settings">
-                            <h3 class="panel-title">Water / Brush</h3>
-                            <div class="settings-grid">
-                                <div class="setting-field full-width">
-                                    <label class="toggle-label">
-                                        <input type="checkbox" id="set-water-enabled">
-                                        <span>Water dipping enabled</span>
-                                    </label>
-                                </div>
-                                <div class="setting-field">
-                                    <label>Cup X <span class="unit">mm</span></label>
-                                    <input type="number" id="set-cup-x" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Cup Y <span class="unit">mm</span></label>
-                                    <input type="number" id="set-cup-y" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Cup Height <span class="unit">mm</span></label>
-                                    <input type="number" id="set-cup-height" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Cup Diameter <span class="unit">mm</span></label>
-                                    <input type="number" id="set-cup-diameter" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Dip Depth <span class="unit">mm</span></label>
-                                    <input type="number" id="set-dip-depth" class="input-field" step="0.5">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Dip Time <span class="unit">ms</span></label>
-                                    <input type="number" id="set-dip-time" class="input-field" step="100">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Dip Interval <span class="unit">segments</span></label>
-                                    <input type="number" id="set-dip-interval" class="input-field" step="5">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Scrape Distance <span class="unit">mm</span></label>
-                                    <input type="number" id="set-scrape-distance" class="input-field" step="1" min="0">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Scrape Speed <span class="unit">mm/min</span></label>
-                                    <input type="number" id="set-scrape-speed" class="input-field" step="50" min="100">
-                                </div>
-                            </div>
-                        </section>
-                        <section class="panel" id="pass2-settings">
-                            <h3 class="panel-title">Pass 2 — Wet Brush</h3>
-                            <div class="settings-grid">
-                                <div class="setting-field full-width">
-                                    <label class="toggle-label">
-                                        <input type="checkbox" id="set-two-pass" checked>
-                                        <span>Two-pass watercolor</span>
-                                    </label>
-                                </div>
-                                <div class="setting-field">
-                                    <label>Draw Speed <span class="unit">mm/min</span></label>
-                                    <input type="number" id="set-p2-draw-speed" class="input-field" step="50">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Travel Speed <span class="unit">mm/min</span></label>
-                                    <input type="number" id="set-p2-travel-speed" class="input-field" step="100">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Pen Down Z <span class="unit">mm</span></label>
-                                    <input type="number" id="set-p2-pen-down-z" class="input-field" step="0.1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Lift Height <span class="unit">mm</span></label>
-                                    <input type="number" id="set-p2-lift-height" class="input-field" step="0.5">
-                                </div>
-                                <div class="setting-field full-width" style="margin-top:8px">
-                                    <label style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-2)">Tool Change Park Position</label>
-                                </div>
-                                <div class="setting-field">
-                                    <label>Z Height <span class="unit">mm</span></label>
-                                    <input type="number" id="set-p2-change-z" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>X Position <span class="unit">mm</span></label>
-                                    <input type="number" id="set-p2-change-x" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Y Position <span class="unit">mm</span></label>
-                                    <input type="number" id="set-p2-change-y" class="input-field" step="1">
-                                </div>
-                                <div class="setting-field full-width">
-                                    <div style="display:flex;gap:6px">
-                                        <button id="btn-park-goto" class="btn btn-outline btn-sm" style="flex:1">Go to Park</button>
-                                        <button id="btn-park-save" class="btn btn-outline btn-sm" style="flex:1">Save Current</button>
+                                    <div class="card-title mt-lg">Wacom Slate</div>
+                                    <div class="slate-status">
+                                        <span class="slate-indicator" id="slate-indicator"></span>
+                                        <span id="slate-status-text" style="font-size:10px;color:var(--text-2)">Disconnected</span>
                                     </div>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <button id="btn-slate-capture" class="btn btn-outline btn-sm">Start Capture</button>
+                                        <button id="btn-slate-stop" class="btn btn-outline btn-sm hidden">Stop Capture</button>
+                                        <button id="btn-slate-sync" class="btn btn-outline btn-sm">Sync Pages</button>
+                                    </div>
+                                    <div id="slate-pages" class="mt-md"></div>
+                                    <div class="card-title mt-md">Handwriting OCR</div>
+                                    <button id="btn-ink-ocr" class="btn btn-outline btn-sm">Read Handwriting</button>
+                                    <div id="ocr-result" class="ocr-result mt-sm hidden"></div>
                                 </div>
-                            </div>
-                        </section>
-                        <section class="panel" id="fill-settings">
-                            <h3 class="panel-title">Fill / Hatch</h3>
-                            <div class="settings-grid">
-                                <div class="setting-field full-width">
-                                    <label class="toggle-label">
-                                        <input type="checkbox" id="set-fill-enabled">
-                                        <span>Fill enabled</span>
-                                    </label>
-                                </div>
-                                <div class="setting-field">
-                                    <label>Fill Type</label>
-                                    <select id="set-fill-type" class="input-select">
-                                        <option value="hatch">Hatch</option>
-                                        <option value="crosshatch">Crosshatch</option>
-                                    </select>
-                                </div>
-                                <div class="setting-field">
-                                    <label>Spacing <span class="unit">mm</span></label>
-                                    <input type="number" id="set-fill-spacing" class="input-field" step="0.5" min="0.5">
-                                </div>
-                                <div class="setting-field">
-                                    <label>Angle <span class="unit">deg</span></label>
-                                    <input type="number" id="set-fill-angle" class="input-field" step="5" min="0" max="360">
-                                </div>
-                            </div>
-                        </section>
-                        <div class="settings-actions">
-                            <button id="btn-save-settings" class="btn btn-primary">Save Settings</button>
-                            <span id="settings-saved-msg" class="settings-saved-msg hidden">Saved.</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Panel: Log -->
-            <div class="panel-content" id="panel-log">
-                <div class="log-layout">
-                    <section class="panel">
-                        <h3 class="panel-title">Serial Log</h3>
-                        <div class="log-output" id="serial-log">
-                            <div class="log-line info">
-                                <span class="log-ts">--:--:--</span>
-                                <span class="log-dir">&gt;</span>
-                                <span class="log-msg">Connect to a printer to see serial output.</span>
-                            </div>
-                        </div>
-                        <div class="log-input-row">
-                            <input type="text" id="serial-cmd" class="input-field" placeholder="Send G-code command (e.g. G28)">
-                            <button id="btn-send-cmd" class="btn btn-primary btn-sm">Send</button>
-                        </div>
-                    </section>
-                </div>
-            </div>
+                                <!-- Write sub-panel -->
+                                <div id="tab-write" class="sub-panel">
+                                    <div class="card-title">Scriptorium</div>
+                                    <div class="form-group">
+                                        <label class="form-label">Text</label>
+                                        <textarea id="script-text" class="input-field" style="width:100%;height:80px;resize:vertical" placeholder="Enter text to render..."></textarea>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Font</label>
+                                        <select id="script-font" class="input-select">
+                                            <option value="hershey">Hershey</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Size</label>
+                                        <input type="number" id="script-size" class="input-field" value="10">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Spacing</label>
+                                        <input type="number" id="script-spacing" class="input-field" value="2" step="0.5">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                    <button id="btn-script-generate" class="btn btn-primary btn-sm mt-md">Generate</button>
+                                </div>
 
-            <!-- Panel: Scriptorium -->
-            <div class="panel-content" id="panel-scriptorium">
-                <div class="scriptorium-layout">
-                    <div class="scriptorium-preview">
-                        <div class="panel">
-                            <h3 class="panel-title">Live Preview</h3>
-                            <div class="scriptorium-canvas-wrap">
-                                <div id="scriptorium-svg-container"></div>
+                                <button class="btn btn-continue" id="btn-create-continue">Continue to Prepare &#8594;</button>
                             </div>
                         </div>
                     </div>
-                    <div class="scriptorium-controls">
-                        <!-- Page Size -->
-                        <section class="panel">
-                            <h3 class="panel-title">Page</h3>
-                            <div class="convert-row">
-                                <label>Preset</label>
-                                <select id="sc-page-preset" class="input-select">
-                                    <option value="220mm">220 x 220 mm</option>
-                                    <option value="A4" selected>A4 (210 x 297)</option>
-                                    <option value="A5">A5 (148 x 210)</option>
-                                    <option value="Letter">Letter (216 x 279)</option>
-                                    <option value="4x6">4" x 6" (102 x 152)</option>
-                                    <option value="5x7">5" x 7" (127 x 178)</option>
-                                    <option value="Custom">Custom</option>
-                                </select>
-                            </div>
-                            <div class="convert-row page-dims" id="sc-page-dims">
-                                <input type="number" id="sc-page-width" class="input-field" value="210" step="1"> x
-                                <input type="number" id="sc-page-height" class="input-field" value="297" step="1"> mm
-                            </div>
-                        </section>
 
-                        <!-- Border -->
-                        <section class="panel">
-                            <h3 class="panel-title">Border</h3>
-                            <div class="convert-row">
-                                <label>Style</label>
-                                <select id="sc-border-style" class="input-select">
-                                    <option value="knotwork">Celtic Knotwork</option>
-                                    <option value="vine">Vine & Foliage</option>
-                                    <option value="geometric">Geometric Interlace</option>
-                                    <option value="arch">Romanesque Arch</option>
-                                    <option value="double">Double Rule + Corners</option>
-                                </select>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Weight</span>
-                                <input type="range" class="transform-slider" id="sc-border-weight" min="1" max="5" step="0.5" value="2">
-                                <span class="transform-val" id="sc-border-weight-val">2</span>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Margin</span>
-                                <input type="range" class="transform-slider" id="sc-margin" min="8" max="25" value="14">
-                                <span class="transform-val" id="sc-margin-val">14</span>
-                            </div>
-                        </section>
-
-                        <!-- Ink -->
-                        <section class="panel">
-                            <h3 class="panel-title">Ink Colour</h3>
-                            <div class="sc-color-row" id="sc-ink-swatches">
-                                <div class="sc-color-swatch active" style="background:#1a0f08" data-color="#1a0f08" title="Iron Gall"></div>
-                                <div class="sc-color-swatch" style="background:#2c1a00" data-color="#2c1a00" title="Sepia"></div>
-                                <div class="sc-color-swatch" style="background:#0d1a0d" data-color="#0d1a0d" title="Verdigris"></div>
-                                <div class="sc-color-swatch" style="background:#1a0000" data-color="#1a0000" title="Carmine"></div>
-                                <div class="sc-color-swatch" style="background:#000814" data-color="#000814" title="Azure"></div>
-                                <div class="sc-color-swatch" style="background:#1a1200" data-color="#1a1200" title="Ochre"></div>
-                            </div>
-                        </section>
-
-                        <!-- Title -->
-                        <section class="panel">
-                            <h3 class="panel-title">Title</h3>
-                            <div class="convert-row">
-                                <input type="text" id="sc-title-text" class="input-field" value="Codex Mundi">
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Size</span>
-                                <input type="range" class="transform-slider" id="sc-title-size" min="12" max="48" value="28">
-                                <span class="transform-val" id="sc-title-size-val">28</span>
-                            </div>
-                            <div class="convert-row">
-                                <label>Font</label>
-                                <select id="sc-title-font" class="input-select">
-                                    <option value="UnifrakturMaguntia">Fraktur (Blackletter)</option>
-                                    <option value="'Cinzel Decorative', serif">Cinzel Decorative</option>
-                                    <option value="'Cinzel', serif">Cinzel</option>
-                                    <option value="'IM Fell English', serif">IM Fell (Roman)</option>
-                                </select>
-                            </div>
-                        </section>
-
-                        <!-- Body -->
-                        <section class="panel">
-                            <h3 class="panel-title">Body Text</h3>
-                            <div class="convert-row">
-                                <label>Drop cap letter</label>
-                                <input type="text" id="sc-drop-cap" class="input-field" value="H" maxlength="1">
-                            </div>
-                            <div class="convert-row">
-                                <textarea id="sc-body-text" class="input-field" style="min-height:80px;resize:vertical">ere beginneth the chronicle of the Ancient Realm, wherein are set down the deeds of kings and the wisdom of ages past. Let all who read these words take heed, for the truth herein contained hath been gathered from the four corners of the known world.
-
-In the year of our Lord when the great oak of Thornwood fell, so too did the last of the old kingdoms pass into memory. Yet their wisdom endureth still, written upon these pages by faithful hands.</textarea>
-                            </div>
-                            <div class="convert-row">
-                                <label>Body font</label>
-                                <select id="sc-body-font" class="input-select">
-                                    <option value="'IM Fell English', serif" selected>IM Fell (Humanist)</option>
-                                    <option value="UnifrakturMaguntia">Fraktur</option>
-                                    <option value="'Cinzel', serif">Cinzel</option>
-                                </select>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Body size</span>
-                                <input type="range" class="transform-slider" id="sc-body-size" min="9" max="18" value="12">
-                                <span class="transform-val" id="sc-body-size-val">12</span>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Cap size</span>
-                                <input type="range" class="transform-slider" id="sc-drop-cap-size" min="40" max="100" value="64">
-                                <span class="transform-val" id="sc-drop-cap-size-val">64</span>
-                            </div>
-                        </section>
-
-                        <!-- Decoration -->
-                        <section class="panel">
-                            <h3 class="panel-title">Decoration</h3>
-                            <label class="check-label"><input type="checkbox" id="sc-show-illumination" checked> Corner illuminations</label>
-                            <label class="check-label"><input type="checkbox" id="sc-show-ruled" checked> Ruled lines</label>
-                            <label class="check-label"><input type="checkbox" id="sc-show-footer" checked> Footer flourish</label>
-                            <div class="convert-row" style="margin-top:6px">
-                                <label>Folio number</label>
-                                <input type="text" id="sc-folio" class="input-field" value="XXIII">
-                            </div>
-                        </section>
-
-                        <!-- Export -->
-                        <section class="panel">
-                            <h3 class="panel-title">Export</h3>
-                            <button id="sc-send-to-plotter" class="btn btn-primary btn-block">Send to Plotter</button>
-                            <button id="sc-download-svg" class="btn btn-outline btn-block" style="margin-top:6px">Download SVG</button>
-                        </section>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Panel: Toon Tracer -->
-            <div class="panel-content" id="panel-toon">
-                <div class="toon-layout">
-                    <div class="toon-preview">
-                        <section class="panel">
-                            <h3 class="panel-title">
-                                Trace Preview
-                                <span class="panel-badge" id="toon-trace-info"></span>
-                            </h3>
-                            <div class="toon-drop-area">
-                                <div id="toon-drop-zone" class="drop-zone">
-                                    <div class="drop-zone-content">
-                                        <div class="drop-icon">&#9993;</div>
-                                        <div>Drop image here or click to browse</div>
-                                        <div style="font-size:10px;color:var(--text-3);margin-top:4px">PNG, JPG, BMP, GIF, WEBP</div>
+                    <!-- STEP 3: PREPARE -->
+                    <div id="step-3" class="step-panel">
+                        <div class="split-layout">
+                            <div class="split-canvas">
+                                <div class="canvas-container" id="prepare-canvas-container">
+                                    <canvas id="prepare-canvas"></canvas>
+                                    <div class="canvas-overlay">
+                                        <button class="btn-overlay active" id="btn-prep-show-draw" title="Draw paths">D</button>
+                                        <button class="btn-overlay" id="btn-prep-show-travel" title="Travel moves">T</button>
+                                        <button class="btn-overlay active" id="btn-prep-show-grid" title="Grid">G</button>
                                     </div>
-                                    <input type="file" id="toon-image-input" accept=".png,.jpg,.jpeg,.bmp,.gif,.webp" hidden>
+                                    <div class="canvas-info">
+                                        <span id="prep-info">No SVG loaded</span>
+                                    </div>
                                 </div>
-                                <div class="toon-canvas-wrap">
-                                    <canvas id="toon-canvas" width="600" height="600"></canvas>
+                            </div>
+                            <div class="split-controls">
+                                <div class="card">
+                                    <div class="card-title">Transforms</div>
+                                    <div class="transform-grid">
+                                        <div class="transform-row">
+                                            <span class="transform-label">Scale</span>
+                                            <input type="range" id="tf-scale" min="0.1" max="5" step="0.1" value="1" class="transform-slider">
+                                            <span class="transform-val" id="tf-scale-val">1.0</span>
+                                        </div>
+                                        <div class="transform-row">
+                                            <span class="transform-label">Rotate</span>
+                                            <input type="range" id="tf-rotate" min="-180" max="180" step="1" value="0" class="transform-slider">
+                                            <span class="transform-val" id="tf-rotate-val">0</span>
+                                        </div>
+                                        <div class="transform-row">
+                                            <span class="transform-label">Move X</span>
+                                            <input type="range" id="tf-tx" min="-100" max="100" step="1" value="0" class="transform-slider">
+                                            <span class="transform-val" id="tf-tx-val">0</span>
+                                        </div>
+                                        <div class="transform-row">
+                                            <span class="transform-label">Move Y</span>
+                                            <input type="range" id="tf-ty" min="-100" max="100" step="1" value="0" class="transform-slider">
+                                            <span class="transform-val" id="tf-ty-val">0</span>
+                                        </div>
+                                    </div>
+                                    <div class="transform-checks mt-md">
+                                        <label class="check-label"><input type="checkbox" id="tf-mirror-x"> Mirror X</label>
+                                        <label class="check-label"><input type="checkbox" id="tf-mirror-y"> Mirror Y</label>
+                                        <label class="check-label"><input type="checkbox" id="tf-optimize" checked> Optimize</label>
+                                        <label class="check-label"><input type="checkbox" id="tf-simplify"> Simplify</label>
+                                    </div>
+                                    <button id="btn-tf-reset" class="btn btn-outline btn-sm mt-md">Reset</button>
+                                </div>
+
+                                <div class="card">
+                                    <div class="card-title">Convert</div>
+                                    <button id="btn-convert" class="btn btn-primary" disabled>Generate G-code</button>
+                                    <div id="convert-stats" class="stats-row mt-md"></div>
+                                </div>
+
+                                <div class="card">
+                                    <div class="card-title">G-code Preview</div>
+                                    <div id="gcode-preview" class="gcode-preview"></div>
+                                    <div class="flex-row gap-sm mt-sm">
+                                        <span id="gcode-lines" style="font-size:10px;color:var(--text-2)">0 lines</span>
+                                        <button id="btn-download-gcode" class="btn btn-outline btn-sm" disabled>Download</button>
+                                    </div>
+                                </div>
+
+                                <button class="btn btn-continue" id="btn-prepare-continue" disabled>Continue to Plot &#8594;</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- STEP 4: PLOT -->
+                    <div id="step-4" class="step-panel">
+                        <div class="split-layout">
+                            <div class="split-canvas">
+                                <div class="canvas-container" id="plot-canvas-container">
+                                    <canvas id="plot-canvas"></canvas>
                                 </div>
                             </div>
-                        </section>
+                            <div class="split-controls">
+                                <div class="card">
+                                    <div class="card-title">Plot</div>
+                                    <div class="flex-row gap-sm">
+                                        <button id="btn-print" class="btn btn-primary" disabled>Start Plot</button>
+                                        <button id="btn-print-stop" class="btn btn-estop btn-sm" disabled>Stop</button>
+                                    </div>
+                                    <div class="progress-container mt-md">
+                                        <div class="progress-bar"><div class="progress-fill" id="plot-progress-fill" style="width:0%"></div></div>
+                                        <div class="progress-text" id="plot-progress-text">Idle</div>
+                                    </div>
+                                    <div id="plot-stats" class="stats-row mt-md"></div>
+                                </div>
+
+                                <div class="card">
+                                    <div class="card-title">Live Plot</div>
+                                    <button id="btn-live-plot" class="btn btn-live-plot" disabled>Start Live Plot</button>
+                                    <div id="live-plot-status" class="mt-sm" style="font-size:10px;color:var(--text-2)">Requires Slate capture + plotter connected</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="toon-controls">
-                        <!-- Page Size -->
-                        <section class="panel">
-                            <h3 class="panel-title">Page</h3>
-                            <div class="convert-row">
-                                <label>Preset</label>
-                                <select id="toon-page-preset" class="input-select">
-                                    <option value="220mm" selected>220 x 220 mm</option>
-                                    <option value="A4">A4 (210 x 297)</option>
-                                    <option value="A5">A5 (148 x 210)</option>
-                                    <option value="Letter">Letter (216 x 279)</option>
-                                    <option value="4x6">4" x 6" (102 x 152)</option>
-                                    <option value="5x7">5" x 7" (127 x 178)</option>
-                                    <option value="Custom">Custom</option>
-                                </select>
-                            </div>
-                            <div class="convert-row page-dims">
-                                <input type="number" id="toon-page-width" class="input-field" value="220" step="1"> x
-                                <input type="number" id="toon-page-height" class="input-field" value="220" step="1"> mm
-                            </div>
-                        </section>
 
-                        <!-- Edge Detection -->
-                        <section class="panel">
-                            <h3 class="panel-title">Edge Detection</h3>
-                            <div class="transform-row">
-                                <span class="transform-label">Canny Low</span>
-                                <input type="range" class="transform-slider" id="toon-canny-low" min="10" max="200" value="50">
-                                <span class="transform-val" id="toon-canny-low-val">50</span>
+                    <!-- STEP 5: CONFIG -->
+                    <div id="step-5" class="step-panel">
+                        <div class="split-controls" style="width:100%;max-width:600px;margin:0 auto">
+                            <div class="card">
+                                <div class="card-title">Movement Settings</div>
+                                <div class="settings-grid" id="settings-movement">
+                                    <div class="setting-field">
+                                        <label>Travel Speed</label>
+                                        <input type="number" id="set-travel-speed" class="input-field" value="3000">
+                                        <span class="unit">mm/min</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Draw Speed</label>
+                                        <input type="number" id="set-draw-speed" class="input-field" value="1500">
+                                        <span class="unit">mm/min</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Z Travel Speed</label>
+                                        <input type="number" id="set-z-travel-speed" class="input-field" value="3000">
+                                        <span class="unit">mm/min</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Z Draw Speed</label>
+                                        <input type="number" id="set-z-draw-speed" class="input-field" value="1000">
+                                        <span class="unit">mm/min</span>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Canny High</span>
-                                <input type="range" class="transform-slider" id="toon-canny-high" min="50" max="400" value="150">
-                                <span class="transform-val" id="toon-canny-high-val">150</span>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Blur</span>
-                                <input type="range" class="transform-slider" id="toon-blur" min="1" max="25" value="9">
-                                <span class="transform-val" id="toon-blur-val">9</span>
-                            </div>
-                        </section>
 
-                        <!-- Simplification -->
-                        <section class="panel">
-                            <h3 class="panel-title">Simplification</h3>
-                            <div class="transform-row">
-                                <span class="transform-label">Posterize</span>
-                                <input type="range" class="transform-slider" id="toon-posterize" min="0" max="24" value="8">
-                                <span class="transform-val" id="toon-posterize-val">8</span>
+                            <div class="card">
+                                <div class="card-title">Water Settings</div>
+                                <div class="settings-grid" id="settings-water">
+                                    <div class="setting-field">
+                                        <label>Water Dip Interval</label>
+                                        <input type="number" id="set-water-interval" class="input-field" value="0">
+                                        <span class="unit">strokes</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Dip Duration</label>
+                                        <input type="number" id="set-water-duration" class="input-field" value="500">
+                                        <span class="unit">ms</span>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Epsilon</span>
-                                <input type="range" class="transform-slider" id="toon-epsilon" min="0.5" max="10" step="0.5" value="1.5">
-                                <span class="transform-val" id="toon-epsilon-val">1.5</span>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Min Len</span>
-                                <input type="range" class="transform-slider" id="toon-min-len" min="2" max="50" value="10">
-                                <span class="transform-val" id="toon-min-len-val">10</span>
-                            </div>
-                            <label class="check-label" style="margin-top:4px"><input type="checkbox" id="toon-invert"> Invert (light-on-dark)</label>
-                        </section>
 
-                        <!-- Trace -->
-                        <section class="panel">
-                            <h3 class="panel-title">Trace</h3>
-                            <button id="btn-toon-trace" class="btn btn-primary btn-block" disabled>Trace Image</button>
-                            <button id="btn-toon-retrace" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Re-trace</button>
-                        </section>
+                            <div class="card">
+                                <div class="card-title">Fill / Hatch</div>
+                                <div class="settings-grid" id="settings-fill">
+                                    <div class="setting-field">
+                                        <label>Fill Mode</label>
+                                        <select id="set-fill-mode" class="input-select">
+                                            <option value="none">None</option>
+                                            <option value="hatch">Hatch</option>
+                                            <option value="crosshatch">Crosshatch</option>
+                                        </select>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Fill Spacing</label>
+                                        <input type="number" id="set-fill-spacing" class="input-field" value="2" step="0.5">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Fill Angle</label>
+                                        <input type="number" id="set-fill-angle" class="input-field" value="45">
+                                        <span class="unit">deg</span>
+                                    </div>
+                                    <div class="setting-field">
+                                        <label>Fill Inset</label>
+                                        <input type="number" id="set-fill-inset" class="input-field" value="0" step="0.1">
+                                        <span class="unit">mm</span>
+                                    </div>
+                                </div>
+                            </div>
 
-                        <!-- Export -->
-                        <section class="panel">
-                            <h3 class="panel-title">Export</h3>
-                            <button id="btn-toon-send" class="btn btn-primary btn-block" disabled>Send to Plotter</button>
-                            <button id="btn-toon-download" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Download SVG</button>
-                        </section>
+                            <div class="card">
+                                <div class="card-title">Park Position</div>
+                                <div class="flex-row gap-sm">
+                                    <button id="btn-park-goto" class="btn btn-outline btn-sm">Go to Park</button>
+                                    <button id="btn-park-save" class="btn btn-outline btn-sm">Save Current as Park</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
+
                 </div>
             </div>
-
-            <!-- Panel: Ink (Hand Writing) -->
-            <div class="panel-content" id="panel-ink">
-                <div class="ink-layout">
-                    <div class="ink-canvas-area">
-                        <section class="panel" style="height:100%;display:flex;flex-direction:column">
-                            <h3 class="panel-title">
-                                Drawing Pad
-                                <span class="panel-badge" id="ink-stroke-info"></span>
-                            </h3>
-                            <div class="ink-canvas-wrap">
-                                <canvas id="ink-canvas"></canvas>
-                            </div>
-                        </section>
-                    </div>
-                    <div class="ink-controls">
-                        <!-- Page Size -->
-                        <section class="panel">
-                            <h3 class="panel-title">Page</h3>
-                            <div class="convert-row">
-                                <label>Preset</label>
-                                <select id="ink-page-preset" class="input-select">
-                                    <option value="220mm" selected>220 x 220 mm</option>
-                                    <option value="A4">A4 (210 x 297)</option>
-                                    <option value="A5">A5 (148 x 210)</option>
-                                    <option value="Letter">Letter (216 x 279)</option>
-                                    <option value="4x6">4" x 6" (102 x 152)</option>
-                                    <option value="5x7">5" x 7" (127 x 178)</option>
-                                    <option value="Custom">Custom</option>
-                                </select>
-                            </div>
-                            <div class="convert-row page-dims">
-                                <input type="number" id="ink-page-width" class="input-field" value="220" step="1"> x
-                                <input type="number" id="ink-page-height" class="input-field" value="220" step="1"> mm
-                            </div>
-                        </section>
-
-                        <!-- Pen -->
-                        <section class="panel">
-                            <h3 class="panel-title">Pen</h3>
-                            <div class="transform-row">
-                                <span class="transform-label">Width</span>
-                                <input type="range" class="transform-slider" id="ink-stroke-width" min="0.2" max="3" step="0.1" value="0.5">
-                                <span class="transform-val" id="ink-stroke-width-val">0.5</span>
-                            </div>
-                            <div class="transform-row">
-                                <span class="transform-label">Smoothing</span>
-                                <input type="range" class="transform-slider" id="ink-smoothing" min="0" max="5" step="1" value="2">
-                                <span class="transform-val" id="ink-smoothing-val">2</span>
-                            </div>
-                            <label class="check-label" style="margin-top:4px"><input type="checkbox" id="ink-pressure" checked> Pressure sensitive</label>
-                        </section>
-
-                        <!-- Slate -->
-                        <section class="panel">
-                            <h3 class="panel-title">Wacom Slate</h3>
-                            <div id="slate-status" class="upload-info" style="margin-bottom:6px">
-                                <span style="color:var(--text-2)">Disconnected</span>
-                            </div>
-                            <button id="btn-slate-connect" class="btn btn-primary btn-block">Connect & Capture</button>
-                            <button id="btn-slate-stop" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Stop & Save</button>
-                            <button id="btn-live-plot" class="btn btn-live-plot btn-block" style="margin-top:6px" disabled>Live Plot</button>
-                            <div style="display:flex;gap:6px;margin-top:6px">
-                                <button id="btn-slate-sync" class="btn btn-outline" style="flex:1">Sync Pages</button>
-                                <button id="btn-slate-load" class="btn btn-outline" style="flex:1" disabled>Load Page</button>
-                            </div>
-                            <select id="slate-pages-select" class="input-select" style="margin-top:6px;display:none"></select>
-                        </section>
-
-                        <!-- Strokes -->
-                        <section class="panel">
-                            <h3 class="panel-title">Strokes</h3>
-                            <div style="display:flex;gap:6px">
-                                <button id="btn-ink-undo" class="btn btn-outline" style="flex:1" disabled>Undo</button>
-                                <button id="btn-ink-clear" class="btn btn-outline" style="flex:1" disabled>Clear</button>
-                            </div>
-                        </section>
-
-                        <!-- Export -->
-                        <section class="panel">
-                            <h3 class="panel-title">Export</h3>
-                            <button id="btn-ink-send" class="btn btn-primary btn-block" disabled>Send to Plotter</button>
-                            <button id="btn-ink-download" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Download SVG</button>
-                            <button id="btn-ink-read" class="btn btn-outline btn-block" style="margin-top:6px" disabled>Read Handwriting</button>
-                            <div id="ink-ocr-result" class="hidden" style="margin-top:6px;max-height:200px;overflow-y:auto">
-                                <pre style="white-space:pre-wrap;font-size:12px;padding:8px;background:var(--bg-1);border-radius:4px;border:1px solid var(--border-light)"></pre>
-                            </div>
-                        </section>
-                    </div>
-                </div>
-            </div>
-
         </div>
+
+        <!-- LOG DRAWER -->
+        <div id="log-drawer" class="log-drawer">
+            <div id="log-header" class="log-header">
+                <span class="log-header-title">Serial Log</span>
+                <span style="font-size:10px;color:var(--text-3)">&#9650; toggle</span>
+            </div>
+            <div id="log-output" class="log-output"></div>
+            <div class="log-input-row">
+                <input id="log-command-input" placeholder="Send G-code command...">
+                <button id="log-send-btn" class="btn btn-outline btn-sm">Send</button>
+            </div>
+        </div>
+
+        <!-- TOAST CONTAINER -->
+        <div id="toast-container" class="toast-container"></div>
     </div>
 
-    <!-- Toast Container -->
-    <div class="toast-container" id="toast-container"></div>
-
-    <script src="app.js?v=12"></script>
+    <!-- Module scripts -->
+    <script type="module" src="app/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,185 @@
+/* canvas-preview.js — Blueprint canvas: grid, page, toolpath */
+
+import { getState, subscribe } from '../state.js';
+
+const BED_SIZE = 220;
+
+export function initCanvasPreview() {
+    subscribe('canvas', (changed, state) => {
+        if (changed.polylines !== undefined || changed.toolpath !== undefined ||
+            changed.showDraw !== undefined || changed.showTravel !== undefined ||
+            changed.showGrid !== undefined || changed.pageWidth !== undefined ||
+            changed.pageHeight !== undefined) {
+            redrawAll(state);
+        }
+    });
+}
+
+function getCanvas(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const container = canvas.parentElement;
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return { canvas, ctx, w: rect.width, h: rect.height };
+}
+
+export function drawCanvas(canvasId, state) {
+    const info = getCanvas(canvasId);
+    if (!info) return;
+    const { ctx, w, h } = info;
+    const s = state || getState();
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Background
+    ctx.fillStyle = '#0a1628';
+    ctx.fillRect(0, 0, w, h);
+
+    // Blueprint grid
+    if (s.showGrid !== false) {
+        drawGrid(ctx, w, h);
+    }
+
+    // Page rectangle
+    const { ox, oy, scale } = drawPage(ctx, w, h, s);
+
+    // Polylines (SVG preview)
+    if (s.polylines && s.showDraw !== false) {
+        drawPolylines(ctx, ox, oy, scale, s.polylines, '#5b9bd5');
+    }
+
+    // Toolpath (G-code preview)
+    if (s.toolpath && s.toolpath.length > 0) {
+        drawToolpath(ctx, ox, oy, scale, s.toolpath, s.showDraw, s.showTravel);
+    }
+}
+
+function drawGrid(ctx, w, h) {
+    const gridSize = 20;
+    ctx.strokeStyle = '#1a2d50';
+    ctx.lineWidth = 0.5;
+
+    for (let x = 0; x < w; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+    }
+    for (let y = 0; y < h; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+    }
+}
+
+function drawPage(ctx, w, h, s) {
+    const padding = 20;
+    const availW = w - padding * 2;
+    const availH = h - padding * 2;
+
+    const scaleX = availW / BED_SIZE;
+    const scaleY = availH / BED_SIZE;
+    const scale = Math.min(scaleX, scaleY);
+
+    const bedW = BED_SIZE * scale;
+    const bedH = BED_SIZE * scale;
+    const ox = (w - bedW) / 2;
+    const oy = (h - bedH) / 2;
+
+    // Bed border
+    ctx.strokeStyle = '#2a4a7f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox, oy, bedW, bedH);
+
+    // Page rectangle
+    const pageW = (s.pageWidth || 220) * scale;
+    const pageH = (s.pageHeight || 220) * scale;
+    const pageOx = (s.pageOffsetX || 0) * scale;
+    const pageOy = (s.pageOffsetY || 0) * scale;
+
+    ctx.strokeStyle = '#3d6ab5';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(ox + pageOx, oy + pageOy, pageW, pageH);
+    ctx.setLineDash([]);
+
+    // Center crosshair
+    ctx.strokeStyle = '#2a4a7f';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ox + bedW / 2 - 5, oy + bedH / 2);
+    ctx.lineTo(ox + bedW / 2 + 5, oy + bedH / 2);
+    ctx.moveTo(ox + bedW / 2, oy + bedH / 2 - 5);
+    ctx.lineTo(ox + bedW / 2, oy + bedH / 2 + 5);
+    ctx.stroke();
+
+    return { ox, oy, scale };
+}
+
+function drawPolylines(ctx, ox, oy, scale, polylines, color) {
+    if (!polylines || !polylines.length) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+
+    for (const poly of polylines) {
+        if (!poly.points || poly.points.length < 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(ox + poly.points[0][0] * scale, oy + poly.points[0][1] * scale);
+        for (let i = 1; i < poly.points.length; i++) {
+            ctx.lineTo(ox + poly.points[i][0] * scale, oy + poly.points[i][1] * scale);
+        }
+        ctx.stroke();
+    }
+}
+
+function drawToolpath(ctx, ox, oy, scale, toolpath, showDraw, showTravel) {
+    for (const seg of toolpath) {
+        if (seg.type === 'draw' && showDraw !== false) {
+            ctx.strokeStyle = '#e8a838';
+            ctx.lineWidth = 1;
+        } else if (seg.type === 'travel' && showTravel) {
+            ctx.strokeStyle = '#ff444466';
+            ctx.lineWidth = 0.5;
+            ctx.setLineDash([2, 2]);
+        } else {
+            continue;
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(ox + seg.from[0] * scale, oy + seg.from[1] * scale);
+        ctx.lineTo(ox + seg.to[0] * scale, oy + seg.to[1] * scale);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+}
+
+export function redrawAll(state) {
+    const s = state || getState();
+    // Redraw all visible canvases
+    const activePanel = document.querySelector('.step-panel.active');
+    if (!activePanel) return;
+
+    const canvas = activePanel.querySelector('canvas');
+    if (canvas) {
+        drawCanvas(canvas.id, s);
+    }
+}
+
+export function redrawCanvas(canvasId) {
+    drawCanvas(canvasId, getState());
+}
+
+// Redraw on resize
+let resizeTimer;
+window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => redrawAll(), 100);
+});
