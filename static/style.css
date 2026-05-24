@@ -322,8 +322,10 @@ body {
 
 .viewport-content {
     flex: 1;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 16px;
+    display: flex;
+    flex-direction: column;
 }
 
 /* ─── Step Panels ─── */
@@ -555,6 +557,7 @@ body {
     background: var(--bp-bg-0);
     border: 1px solid var(--border);
     overflow: hidden;
+    min-height: 300px;
 }
 
 .canvas-container canvas {
@@ -1161,6 +1164,8 @@ body {
     gap: 16px;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
+    height: 100%;
 }
 
 .split-canvas {
@@ -1172,6 +1177,7 @@ body {
     width: 320px;
     flex-shrink: 0;
     overflow-y: auto;
+    max-height: 100%;
 }
 
 /* ─── Page size presets ─── */

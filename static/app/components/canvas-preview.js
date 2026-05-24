@@ -130,11 +130,13 @@ function drawPolylines(ctx, ox, oy, scale, polylines, color) {
     ctx.lineWidth = 1;
 
     for (const poly of polylines) {
-        if (!poly.points || poly.points.length < 2) continue;
+        // API returns polylines as arrays of [x,y] points (not objects)
+        const pts = Array.isArray(poly) ? poly : poly.points;
+        if (!pts || pts.length < 2) continue;
         ctx.beginPath();
-        ctx.moveTo(ox + poly.points[0][0] * scale, oy + poly.points[0][1] * scale);
-        for (let i = 1; i < poly.points.length; i++) {
-            ctx.lineTo(ox + poly.points[i][0] * scale, oy + poly.points[i][1] * scale);
+        ctx.moveTo(ox + pts[0][0] * scale, oy + pts[0][1] * scale);
+        for (let i = 1; i < pts.length; i++) {
+            ctx.lineTo(ox + pts[i][0] * scale, oy + pts[i][1] * scale);
         }
         ctx.stroke();
     }
@@ -142,6 +144,10 @@ function drawPolylines(ctx, ox, oy, scale, polylines, color) {
 
 function drawToolpath(ctx, ox, oy, scale, toolpath, showDraw, showTravel) {
     for (const seg of toolpath) {
+        // API returns {layer, points: [[x,y],[x,y]], type}
+        const pts = seg.points;
+        if (!pts || pts.length < 2) continue;
+
         if (seg.type === 'draw' && showDraw !== false) {
             ctx.strokeStyle = '#e8a838';
             ctx.lineWidth = 1;
@@ -154,8 +160,10 @@ function drawToolpath(ctx, ox, oy, scale, toolpath, showDraw, showTravel) {
         }
 
         ctx.beginPath();
-        ctx.moveTo(ox + seg.from[0] * scale, oy + seg.from[1] * scale);
-        ctx.lineTo(ox + seg.to[0] * scale, oy + seg.to[1] * scale);
+        ctx.moveTo(ox + pts[0][0] * scale, oy + pts[0][1] * scale);
+        for (let i = 1; i < pts.length; i++) {
+            ctx.lineTo(ox + pts[i][0] * scale, oy + pts[i][1] * scale);
+        }
         ctx.stroke();
         ctx.setLineDash([]);
     }
