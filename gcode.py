@@ -680,34 +680,21 @@ def polylines_to_gcode(
     phys_bed_x = config.PRINTER_BED_X
     phys_bed_y = config.PRINTER_BED_Y
 
-    if pen_raw_ox == 0.0 and pen_raw_oy == 0.0:
-        # No offset — full page available, centered on bed
-        pen_phys_x, pen_phys_y = 0.0, 0.0
-    else:
-        # Pen center relative to physical bed center
-        pen_phys_x = -(pen_raw_ox - phys_bed_x / 2)
-        pen_phys_y = -(pen_raw_oy - phys_bed_y / 2)
+    # Pen offset from bed center (pen position - bed center)
+    # Positive = pen is right/above hotend
+    pen_dx = 0.0
+    pen_dy = 0.0
+    if pen_raw_ox != 0.0 or pen_raw_oy != 0.0:
+        pen_dx = pen_raw_ox - phys_bed_x / 2
+        pen_dy = pen_raw_oy - phys_bed_y / 2
 
-    # Pen can physically reach: [pen_phys, pen_phys + bed_size]
-    pen_reach_x0 = max(0.0, pen_phys_x)
-    pen_reach_y0 = max(0.0, pen_phys_y)
-    pen_reach_x1 = min(phys_bed_x, phys_bed_x + pen_phys_x)
-    pen_reach_y1 = min(phys_bed_y, phys_bed_y + pen_phys_y)
-
-    # Page area centered on physical bed
+    # Page area centered on physical bed (in bed/pen coordinates)
     page_ox = (phys_bed_x - bed_x) / 2
     page_oy = (phys_bed_y - bed_y) / 2
 
-    # Effective area: intersection of page and pen-reachable area
-    eff_ox = max(page_ox, pen_reach_x0)
-    eff_oy = max(page_oy, pen_reach_y0)
-    eff_end_x = min(page_ox + bed_x, pen_reach_x1)
-    eff_end_y = min(page_oy + bed_y, pen_reach_y1)
-    eff_w = eff_end_x - eff_ox
-    eff_h = eff_end_y - eff_oy
-
+    # Scale to fit page
     margin = 10.0
-    available = eff_w - 2 * margin, eff_h - 2 * margin
+    available = (bed_x - 2 * margin, bed_y - 2 * margin)
     if svg_w > 0 and svg_h > 0:
         scale = min(available[0] / svg_w, available[1] / svg_h)
     else:
@@ -715,13 +702,22 @@ def polylines_to_gcode(
 
     scaled_w = svg_w * scale
     scaled_h = svg_h * scale
-    # Center drawing within effective area
-    offset_x = eff_ox + (eff_w - scaled_w) / 2 - min_x * scale
-    offset_y = eff_oy + (eff_h - scaled_h) / 2 - min_y * scale
+    # Center drawing on page (in bed coordinates)
+    offset_x = page_ox + (bed_x - scaled_w) / 2 - min_x * scale
+    offset_y = page_oy + (bed_y - scaled_h) / 2 - min_y * scale
+
+    # Effective area for metadata (page bounds in bed coords)
+    eff_ox = page_ox
+    eff_oy = page_oy
+    eff_w = bed_x
+    eff_h = bed_y
 
     def transform(px, py):
-        return (round(px * scale + offset_x + page_offset_x, 3),
-                round(py * scale + offset_y + page_offset_y, 3))
+        # Compute position in bed coordinates, then convert to hotend coordinates
+        bed_px = px * scale + offset_x + page_offset_x
+        bed_py = py * scale + offset_y + page_offset_y
+        return (round(bed_px - pen_dx, 3),
+                round(bed_py - pen_dy, 3))
 
     # Check for two-pass watercolor mode
     if wt.enabled and wt.two_pass:
