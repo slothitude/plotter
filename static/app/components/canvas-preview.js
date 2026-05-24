@@ -19,15 +19,21 @@ function getCanvas(canvasId) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return null;
     const container = canvas.parentElement;
-    const rect = container.getBoundingClientRect();
+    // Use CSS pixels (layout size), not canvas attribute pixels
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (w === 0 || h === 0) return null;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    canvas.style.width = rect.width + 'px';
-    canvas.style.height = rect.height + 'px';
+    const pw = Math.round(w * dpr);
+    const ph = Math.round(h * dpr);
+    // Only resize backing store when dimensions actually change
+    if (canvas.width !== pw || canvas.height !== ph) {
+        canvas.width = pw;
+        canvas.height = ph;
+    }
     const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    return { canvas, ctx, w: rect.width, h: rect.height };
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { canvas, ctx, w, h };
 }
 
 export function drawCanvas(canvasId, state) {
@@ -50,14 +56,18 @@ export function drawCanvas(canvasId, state) {
     // Page rectangle
     const { ox, oy, scale } = drawPage(ctx, w, h, s);
 
-    // Polylines (SVG preview)
+    // Polylines (SVG preview with transforms applied)
     if (s.polylines && s.showDraw !== false) {
-        drawPolylines(ctx, ox, oy, scale, s.polylines, '#5b9bd5');
+        const t = s.transform || {};
+        const transformed = applyTransforms(s.polylines, t, s.pageWidth || 220, s.pageHeight || 220);
+        drawPolylines(ctx, ox, oy, scale, transformed, '#5b9bd5');
     }
 
-    // Toolpath (G-code preview)
+    // Toolpath (G-code preview — also apply transforms since backend returns raw path)
     if (s.toolpath && s.toolpath.length > 0) {
-        drawToolpath(ctx, ox, oy, scale, s.toolpath, s.showDraw, s.showTravel);
+        const t = s.transform || {};
+        const transformedToolpath = applyTransformsToToolpath(s.toolpath, t, s.pageWidth || 220, s.pageHeight || 220);
+        drawToolpath(ctx, ox, oy, scale, transformedToolpath, s.showDraw, s.showTravel);
     }
 }
 
@@ -108,7 +118,10 @@ function drawPage(ctx, w, h, s) {
     ctx.strokeStyle = '#3d6ab5';
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
-    ctx.strokeRect(ox + pageOx, oy + pageOy, pageW, pageH);
+    // Center page on bed
+    const pageX = ox + (bedW - pageW) / 2 + pageOx;
+    const pageY = oy + (bedH - pageH) / 2 + pageOy;
+    ctx.strokeRect(pageX, pageY, pageW, pageH);
     ctx.setLineDash([]);
 
     // Center crosshair
@@ -122,6 +135,84 @@ function drawPage(ctx, w, h, s) {
     ctx.stroke();
 
     return { ox, oy, scale };
+}
+
+function applyTransforms(polylines, t, pageW, pageH) {
+    const sc = t.scale || 1;
+    const rot = (t.rotate || 0) * Math.PI / 180;
+    const tx = t.translate_x || 0;
+    const ty = t.translate_y || 0;
+    const mx = t.mirror_x;
+    const my = t.mirror_y;
+    // Center of page for rotation/scaling
+    const cx = pageW / 2;
+    const cy = pageH / 2;
+
+    return polylines.map(poly => {
+        const pts = Array.isArray(poly) ? poly : poly.points;
+        if (!pts || pts.length < 2) return poly;
+
+        return pts.map(([x, y]) => {
+            // Translate to center
+            let px = x - cx;
+            let py = y - cy;
+            // Mirror
+            if (mx) px = -px;
+            if (my) py = -py;
+            // Scale
+            px *= sc;
+            py *= sc;
+            // Rotate
+            if (rot) {
+                const cos = Math.cos(rot);
+                const sin = Math.sin(rot);
+                const rx = px * cos - py * sin;
+                const ry = px * sin + py * cos;
+                px = rx;
+                py = ry;
+            }
+            // Translate back + user offset
+            px += cx + tx;
+            py += cy + ty;
+            return [px, py];
+        });
+    });
+}
+
+function applyTransformsToToolpath(toolpath, t, pageW, pageH) {
+    const sc = t.scale || 1;
+    const rot = (t.rotate || 0) * Math.PI / 180;
+    const tx = t.translate_x || 0;
+    const ty = t.translate_y || 0;
+    const mx = t.mirror_x;
+    const my = t.mirror_y;
+    const cx = pageW / 2;
+    const cy = pageH / 2;
+
+    return toolpath.map(seg => {
+        const pts = seg.points;
+        if (!pts || pts.length < 2) return seg;
+        const newPts = pts.map(([x, y]) => {
+            let px = x - cx;
+            let py = y - cy;
+            if (mx) px = -px;
+            if (my) py = -py;
+            px *= sc;
+            py *= sc;
+            if (rot) {
+                const cos = Math.cos(rot);
+                const sin = Math.sin(rot);
+                const rx = px * cos - py * sin;
+                const ry = px * sin + py * cos;
+                px = rx;
+                py = ry;
+            }
+            px += cx + tx;
+            py += cy + ty;
+            return [px, py];
+        });
+        return { ...seg, points: newPts };
+    });
 }
 
 function drawPolylines(ctx, ox, oy, scale, polylines, color) {

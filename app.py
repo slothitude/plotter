@@ -1687,6 +1687,17 @@ def cleanup_output():
 
 # ── Main ─────────────────────────────────────────────────────────────
 
+@app.route("/api/shutdown", methods=["POST"])
+def shutdown():
+    """Shut down the Flask server."""
+    func = request.environ.get("werkzeug.server.shutdown")
+    if func is not None:
+        func()
+    else:
+        os._exit(0)
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     _cleanup_output()
     print("Pen Plotter — http://localhost:5000")

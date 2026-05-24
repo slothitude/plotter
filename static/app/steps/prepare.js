@@ -81,7 +81,13 @@ function initTransforms() {
 
 function updateTransform(key, value) {
     const t = { ...getState().transform, [key]: value };
-    setState({ transform: t });
+    setState({ transform: t, gcodeGenerated: false, toolpath: [] });
+    // Re-enable convert button
+    document.getElementById('btn-convert').disabled = false;
+    document.getElementById('btn-download-gcode').disabled = true;
+    document.getElementById('btn-prepare-continue').disabled = true;
+    document.getElementById('gcode-preview').textContent = '';
+    document.getElementById('gcode-lines').textContent = '0 lines';
     redrawCanvas('prepare-canvas');
 }
 

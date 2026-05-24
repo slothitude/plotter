@@ -29,6 +29,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // UI
     initLogDrawer();
 
+    // Shutdown
+    initShutdown();
+
     // Load initial data
     loadInitialData();
 });
@@ -60,4 +63,19 @@ async function loadInitialData() {
         const settings = await (await fetch(`/api/settings/${tool}`)).json();
         setState({ settings });
     } catch (e) {}
+}
+
+function initShutdown() {
+    // Quit button
+    document.getElementById('btn-quit')?.addEventListener('click', () => {
+        if (confirm('Shut down Plotter CTRL?')) {
+            navigator.sendBeacon('/api/shutdown');
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a1628;color:#5b9bd5;font-family:monospace;font-size:14px">Plotter CTRL stopped</div>';
+        }
+    });
+
+    // Auto-shutdown when tab closes
+    window.addEventListener('beforeunload', () => {
+        navigator.sendBeacon('/api/shutdown');
+    });
 }
