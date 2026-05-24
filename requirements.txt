@@ -4,3 +4,5 @@ pyserial
 svgpathtools
 numpy
 toml
+mcp
+requests

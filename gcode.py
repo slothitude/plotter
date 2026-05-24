@@ -615,6 +615,7 @@ def polylines_to_gcode(
     user_translate_y: float = 0.0,
     mirror_x: bool = False,
     mirror_y: bool = False,
+    no_fit: bool = False,
 ) -> tuple[str, list[dict]]:
     """Convert polylines to G-code string. Returns (gcode_str, toolpath_data).
 
@@ -674,37 +675,48 @@ def polylines_to_gcode(
     svg_w = max_x - min_x
     svg_h = max_y - min_y
 
-    # Compute pen offset correction using physical bed dimensions
-    pen_raw_ox = ht.offset_x
-    pen_raw_oy = ht.offset_y
+    # Pen offset: raw physical offset from hotend to pen.
+    # Negative = pen is left/below hotend. Used directly:
+    #   hotend_pos = pen_target - offset
+    pen_dx = ht.offset_x
+    pen_dy = ht.offset_y
+
+    # Page area centered on physical bed (in bed/pen coordinates)
     phys_bed_x = config.PRINTER_BED_X
     phys_bed_y = config.PRINTER_BED_Y
 
-    # Pen offset from bed center (pen position - bed center)
-    # Positive = pen is right/above hotend
-    pen_dx = 0.0
-    pen_dy = 0.0
-    if pen_raw_ox != 0.0 or pen_raw_oy != 0.0:
-        pen_dx = pen_raw_ox - phys_bed_x / 2
-        pen_dy = pen_raw_oy - phys_bed_y / 2
+    # Effective drawing area: pen can reach phys_bed + offset in each axis
+    # Hotend range: 0 to phys_bed. Pen range: offset to phys_bed + offset.
+    # Usable pen range (clipped to 0..phys_bed): max(0, offset) to min(phys_bed, phys_bed + offset)
+    eff_min_x = max(0, pen_dx)
+    eff_max_x = min(phys_bed_x, phys_bed_x + pen_dx)
+    eff_min_y = max(0, pen_dy)
+    eff_max_y = min(phys_bed_y, phys_bed_y + pen_dy)
+    eff_w = eff_max_x - eff_min_x
+    eff_h = eff_max_y - eff_min_y
+    eff_cx = (eff_min_x + eff_max_x) / 2
+    eff_cy = (eff_min_y + eff_max_y) / 2
 
-    # Page area centered on physical bed (in bed/pen coordinates)
     page_ox = (phys_bed_x - bed_x) / 2
     page_oy = (phys_bed_y - bed_y) / 2
 
-    # Scale to fit page
+    # Scale to fit within effective drawing area
     margin = 10.0
-    available = (bed_x - 2 * margin, bed_y - 2 * margin)
-    if svg_w > 0 and svg_h > 0:
+    available = (eff_w - 2 * margin, eff_h - 2 * margin)
+    if no_fit:
+        scale = 1.0
+    elif svg_w > 0 and svg_h > 0:
         scale = min(available[0] / svg_w, available[1] / svg_h)
     else:
         scale = 1.0
 
     scaled_w = svg_w * scale
     scaled_h = svg_h * scale
-    # Center drawing on page (in bed coordinates)
-    offset_x = page_ox + (bed_x - scaled_w) / 2 - min_x * scale
-    offset_y = page_oy + (bed_y - scaled_h) / 2 - min_y * scale
+    # Center drawing within the effective drawing area (pen coordinates)
+    draw_cx = (min_x + max_x) / 2
+    draw_cy = (min_y + max_y) / 2
+    offset_x = eff_cx - draw_cx * scale
+    offset_y = eff_cy - draw_cy * scale
 
     # Effective area for metadata (page bounds in bed coords)
     eff_ox = page_ox

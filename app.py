@@ -1,5 +1,9 @@
 """Pen Plotter — Flask web application."""
 
+# Fix: WMI query can hang on Windows, blocking numpy/scipy imports
+import platform
+platform._wmi = type('M', (), {'exec_query': lambda self, q: None})()
+
 import base64
 import json
 import math
@@ -395,16 +399,21 @@ def test_pattern():
 
     elif pattern == "text":
         text = data.get("text", "HELLO")
+        font_style = data.get("font", "hershey")
         page_width = float(data.get("page_width", config.PRINTER_BED_X))
         page_height = float(data.get("page_height", config.PRINTER_BED_Y))
         page_offset_x = float(data.get("page_offset_x", 0))
         page_offset_y = float(data.get("page_offset_y", 0))
-        scale = 2.0
-        spacing = 2.0
-        max_width = (page_width - 20) / 1
-        # Bypass SVG — generate polylines directly from Hershey font
-        import font
-        strokes = font.text_to_strokes(text, x=10, y=40, scale=scale, spacing=spacing, max_width=max_width)
+        font_size = float(data.get("font_size", 25))
+        import font as _font
+        scale = font_size / _font.CHAR_HEIGHT  # char height in mm
+        spacing = scale * 1.0
+        # Render text at (0,0) — gcode.py handles centering, pen offset, and Z
+        if font_style == "cursive":
+            strokes = _font.text_to_cursive(text, x=0, y=0, scale=scale, spacing=spacing)
+        else:
+            strokes = _font.text_to_strokes(text, x=0, y=0, scale=scale, spacing=spacing)
+
         polylines = [gcode.Polyline(points=s) for s in strokes if len(s) >= 2]
 
         tool = data.get("tool", "pencil")

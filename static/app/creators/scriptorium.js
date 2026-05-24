@@ -16,10 +16,14 @@ function generate() {
     const s = getState();
     const size = parseFloat(document.getElementById('script-size')?.value) || 10;
     const spacing = parseFloat(document.getElementById('script-spacing')?.value) || 2;
+    const font = document.getElementById('script-font')?.value || 'hershey';
+    const fontSize = parseFloat(document.getElementById('script-size')?.value) || 25;
 
     apiPost('/api/test-pattern', {
         pattern: 'text',
         text,
+        font,
+        font_size: fontSize,
         size,
         tool: s.tool,
         page_width: s.pageWidth,
