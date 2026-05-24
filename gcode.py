@@ -705,9 +705,11 @@ def polylines_to_gcode(
 
     scaled_w = svg_w * scale
     scaled_h = svg_h * scale
-    # Center within effective area
-    offset_x = eff_ox + (eff_w - scaled_w) / 2 - min_x * scale
-    offset_y = eff_oy + (eff_h - scaled_h) / 2 - min_y * scale
+    # Center page area on physical bed
+    page_center_ox = (config.PRINTER_BED_X - bed_x) / 2
+    page_center_oy = (config.PRINTER_BED_Y - bed_y) / 2
+    offset_x = eff_ox + page_center_ox + (eff_w - scaled_w) / 2 - min_x * scale
+    offset_y = eff_oy + page_center_oy + (eff_h - scaled_h) / 2 - min_y * scale
 
     def transform(px, py):
         return (round(px * scale + offset_x + page_offset_x, 3),
