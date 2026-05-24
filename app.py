@@ -311,11 +311,14 @@ def test_pattern():
 
     svg_parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">']
 
-    if pattern == "circle":
+    if pattern in ("circle", "circles"):
         r = size / 2
         cx, cy = 50, 50
-        pts = " ".join(f"{cx + r * math.cos(2*math.pi*i/64)},{cy + r * math.sin(2*math.pi*i/64)}" for i in range(65))
-        svg_parts.append(f'<polyline points="{pts}" fill="none" stroke="black"/>')
+        # Concentric circles
+        for ring in range(1, 4):
+            ri = r * ring / 3
+            pts = " ".join(f"{cx + ri * math.cos(2*math.pi*i/64)},{cy + ri * math.sin(2*math.pi*i/64)}" for i in range(65))
+            svg_parts.append(f'<polyline points="{pts}" fill="none" stroke="black"/>')
 
     elif pattern == "square":
         x, y = 50 - size/2, 50 - size/2
@@ -353,6 +356,31 @@ def test_pattern():
             r = (size / 2) * t
             pts.append(f"{cx + r * math.cos(angle)},{cy + r * math.sin(angle)}")
         svg_parts.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="black"/>')
+
+    elif pattern == "crosshatch":
+        step = size / 8
+        start = 50 - size / 2
+        end = 50 + size / 2
+        # Horizontal and vertical lines (grid)
+        for i in range(9):
+            p = start + i * step
+            svg_parts.append(f'<line x1="{start}" y1="{p}" x2="{end}" y2="{p}" stroke="black"/>')
+            svg_parts.append(f'<line x1="{p}" y1="{start}" x2="{p}" y2="{end}" stroke="black"/>')
+        # Diagonal lines
+        for i in range(-8, 9):
+            offset = i * step
+            x1 = max(start, start + offset)
+            y1 = max(start, start - offset)
+            x2 = min(end, end + offset)
+            y2 = min(end, end - offset)
+            if x1 < end and y1 < end:
+                svg_parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="black"/>')
+
+    elif pattern == "wave":
+        pts = " ".join(f"{50 - size/2 + size*i/100},{50 + size/4 * math.sin(4 * 2*math.pi*i/100)}" for i in range(101))
+        svg_parts.append(f'<polyline points="{pts}" fill="none" stroke="black"/>')
+        pts2 = " ".join(f"{50 - size/2 + size*i/100},{50 + size/4 * math.cos(4 * 2*math.pi*i/100)}" for i in range(101))
+        svg_parts.append(f'<polyline points="{pts2}" fill="none" stroke="black"/>')
 
     elif pattern == "crosshair":
         cx, cy = 50, 50
