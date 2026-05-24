@@ -673,6 +673,8 @@ def ink_live_start():
         _live_plot_profile = config.load_profile(tool)
     except FileNotFoundError:
         return jsonify({"error": f"Profile '{tool}' not found"}), 404
+    if _live_plot_profile.height.pen_down_z == 0.0:
+        return jsonify({"error": f"Tool '{tool}' not calibrated (pen_down_z=0). Run calibration first."}), 400
     try:
         serial.start_live_mode(config.SAFE_Z)
         _live_plot_active = True
@@ -751,12 +753,12 @@ def ink_stop():
     for batch in _ink_strokes:
         if len(batch) < 2:
             continue
-        # Wacom coords: 21600 x 14700 → page mm, flip Y
+        # Wacom Slate A5 portrait: swap X/Y + rotate 180 (same as _wacom_to_bed)
         pts = []
         for pt in batch:
             if len(pt) >= 2:
-                x = round(pt[0] / 21600 * pw, 3)
-                y = round((14700 - pt[1]) / 14700 * ph, 3)
+                x = round((1 - pt[1] / 14700) * pw, 3)
+                y = round(pt[0] / 21600 * ph, 3)
                 pts.append((x, y))
         if len(pts) >= 2:
             dwg.add(dwg.polyline(pts, stroke="black", fill="none", stroke_width=0.5))
@@ -833,13 +835,13 @@ def ink_load_page():
 
 # ── Ink OCR ──────────────────────────────────────────────────────────
 
-NIM_API_KEY = os.environ.get("NIM_API_KEY", "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")
+NIM_API_KEY = os.environ.get("NIM_API_KEY", "")
 NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NIM_MODEL = "microsoft/phi-4-multimodal-instruct"
-ZHIPU_API_KEY = os.environ.get("RABBIT_LLM_KEY", "a63a2a7ee2d5431d929c776122e3b706.hzHjrJlnfPd7cYfj")
+ZHIPU_API_KEY = os.environ.get("RABBIT_LLM_KEY", "")
 ZHIPU_VISION_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 ZHIPU_VISION_MODEL = "glm-4.5v"
-OLLAMA_URL = "http://192.168.0.33:11434/v1/chat/completions"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.0.33:11434/v1/chat/completions")
 OLLAMA_VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "minicpm-v")
 
 
@@ -1019,6 +1021,10 @@ def _call_vision_llm(image_b64: str, prompt: str) -> str:
 
     last_err = None
     for prov in providers:
+        # Skip providers with no API key configured
+        auth = prov["headers"].get("Authorization", "")
+        if auth.endswith("Bearer ") or auth == "":
+            continue
         payload = {**base_payload, "model": prov["model"]}
         for attempt in range(2):
             try:
@@ -1308,6 +1314,8 @@ def mark_page():
         profile = config.load_profile(tool)
     except FileNotFoundError:
         return jsonify({"error": f"Profile '{tool}' not found"}), 404
+    if profile.height.pen_down_z == 0.0:
+        return jsonify({"error": f"Tool '{tool}' not calibrated. Run calibration first."}), 400
 
     page = config.load_page_size()
     pw = page["width"]
@@ -1387,6 +1395,8 @@ def bed_level():
         profile = config.load_profile(tool)
     except FileNotFoundError:
         return jsonify({"error": f"Profile '{tool}' not found"}), 404
+    if profile.height.pen_down_z == 0.0:
+        return jsonify({"error": f"Tool '{tool}' not calibrated. Run calibration first."}), 400
 
     pen_down_z = profile.height.pen_down_z
     safe_z = config.SAFE_Z
@@ -1611,8 +1621,42 @@ def set_page_size():
                     "offset_x": offset_x, "offset_y": offset_y})
 
 
+# ── Output Cleanup ───────────────────────────────────────────────────
+
+OUTPUT_MAX_AGE_DAYS = 7
+
+
+def _cleanup_output():
+    """Remove generated files older than OUTPUT_MAX_AGE_DAYS."""
+    if not config.OUTPUT_DIR.exists():
+        return
+    cutoff = time.time() - OUTPUT_MAX_AGE_DAYS * 86400
+    removed = 0
+    for f in config.OUTPUT_DIR.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink()
+            removed += 1
+    if removed:
+        print(f"Cleaned {removed} old files from output/")
+
+
+@app.route("/api/cleanup", methods=["POST"])
+def cleanup_output():
+    """Delete all generated files in output/."""
+    removed = 0
+    if config.OUTPUT_DIR.exists():
+        for f in config.OUTPUT_DIR.iterdir():
+            if f.is_file():
+                f.unlink()
+                removed += 1
+    uploaded_svgs.clear()
+    generated_gcode.clear()
+    return jsonify({"ok": True, "removed": removed})
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _cleanup_output()
     print("Pen Plotter — http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)

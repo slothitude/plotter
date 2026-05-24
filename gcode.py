@@ -818,6 +818,13 @@ def svg_to_gcode(svg_path: str, tool_name: str, **kwargs) -> tuple[str, list[Pol
     polylines = parse_svg(svg_path)
 
     profile = config.load_profile(tool_name)
+
+    # Safety: refuse to generate G-code if tool is not calibrated (pen_down_z=0 crashes the pen)
+    if profile.height.pen_down_z == 0.0:
+        raise ValueError(
+            f"Tool '{tool_name}' is not calibrated (pen_down_z=0). "
+            "Run calibration first to set the correct Z contact height."
+        )
     polylines = apply_fill(polylines, profile.fill)
     gcode_str, toolpath, meta = polylines_to_gcode(polylines, profile, **kwargs)
 
