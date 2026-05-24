@@ -8,6 +8,7 @@ import { initInkDrawing } from '../creators/ink-drawing.js';
 import { initScriptorium } from '../creators/scriptorium.js';
 import { redrawCanvas } from '../components/canvas-preview.js';
 import { nextStep } from '../router.js';
+import { toast } from '../lib/toast.js';
 
 export function initCreate() {
     initTabs();
@@ -24,6 +25,14 @@ export function initCreate() {
             changed.strokeCount !== undefined) {
             redrawCanvas('create-canvas');
             updateStrokeCount();
+        }
+        // Enable/disable continue when SVG loads
+        if (changed.currentSvgId !== undefined) {
+            updateContinueButton();
+        }
+        // Reset gcode state when new SVG loaded (needs re-convert)
+        if (changed.currentSvgId !== undefined && changed.currentSvgId !== null) {
+            setState({ gcodeGenerated: false });
         }
     });
 }
@@ -64,19 +73,19 @@ function updateStrokeCount() {
     if (el) el.textContent = `${getState().strokeCount || 0} strokes`;
 }
 
+function updateContinueButton() {
+    const btn = document.getElementById('btn-create-continue');
+    if (btn) btn.disabled = !getState().currentSvgId;
+}
+
 function initContinueButton() {
     const btn = document.getElementById('btn-create-continue');
+    if (btn) btn.disabled = true;
     btn?.addEventListener('click', () => {
         if (!getState().currentSvgId) {
-            // Will be handled by creators setting state
+            toast('Load an SVG or create a pattern first', 'warn');
             return;
         }
         nextStep();
-    });
-
-    subscribe('create-continue', (changed) => {
-        if (changed.currentSvgId !== undefined) {
-            if (btn) btn.disabled = !changed.currentSvgId;
-        }
     });
 }

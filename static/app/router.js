@@ -1,6 +1,7 @@
 /* router.js — Step navigation + sidebar highlighting */
 
 import { getState, setState, subscribe } from './state.js';
+import { redrawCanvas } from './components/canvas-preview.js';
 
 const STEPS = [
     { id: 1, key: 'setup', label: 'SETUP' },
@@ -10,6 +11,14 @@ const STEPS = [
     { id: 5, key: 'config', label: 'CONFIG' },
 ];
 
+// Canvas IDs per step
+const STEP_CANVASES = {
+    1: 'setup-canvas',
+    2: 'create-canvas',
+    3: 'prepare-canvas',
+    4: 'plot-canvas',
+};
+
 export function initRouter() {
     renderSidebar();
 
@@ -17,13 +26,18 @@ export function initRouter() {
         if (changed.currentStep !== undefined) {
             updateSidebar(changed.currentStep);
             showPanel(changed.currentStep);
+            // Redraw canvas for the new step after DOM updates
+            requestAnimationFrame(() => {
+                const canvasId = STEP_CANVASES[changed.currentStep];
+                if (canvasId) redrawCanvas(canvasId);
+            });
         }
         if (changed.stepComplete !== undefined) {
-            renderSidebar();
+            updateSidebar(getState().currentStep);
         }
     });
 
-    // Navigate after subscribe is registered
+    // Initial render
     showPanel(getState().currentStep);
 }
 

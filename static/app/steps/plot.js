@@ -20,6 +20,16 @@ export function initPlot() {
         if (changed.connected !== undefined || changed.capturing !== undefined) {
             updateLivePlotButton(state);
         }
+        if (changed.gcodeGenerated !== undefined || changed.currentSvgId !== undefined) {
+            updatePrintButton(state);
+        }
+        if (changed.toolpath !== undefined || changed.polylines !== undefined ||
+            changed.pageWidth !== undefined || changed.pageHeight !== undefined) {
+            redrawCanvas('plot-canvas');
+        }
+        if (changed.stats !== undefined && changed.stats) {
+            updateStatsDisplay(changed.stats);
+        }
     });
 }
 
@@ -27,9 +37,7 @@ export function initPlot() {
 function initPrint() {
     document.getElementById('btn-print')?.addEventListener('click', startPrint);
     document.getElementById('btn-print-stop')?.addEventListener('click', stopPrint);
-
-    const s = getState();
-    if (s.gcodeGenerated) enablePrintButton();
+    updatePrintButton(getState());
 }
 
 function startPrint() {
@@ -73,13 +81,15 @@ function updateProgress(progress) {
 function updateBusyState(busy) {
     const btnPrint = document.getElementById('btn-print');
     const btnStop = document.getElementById('btn-print-stop');
-    if (btnPrint) btnPrint.disabled = busy;
+    if (btnPrint) btnPrint.disabled = busy || !getState().gcodeGenerated;
     if (btnStop) btnStop.disabled = !busy;
 }
 
-function enablePrintButton() {
+function updatePrintButton(state) {
     const btn = document.getElementById('btn-print');
-    if (btn) btn.disabled = false;
+    if (!btn) return;
+    btn.disabled = !state.gcodeGenerated || !state.currentSvgId || state.busy;
+    if (state.stats) updateStatsDisplay(state.stats);
 }
 
 // ── Live Plot ──
@@ -143,10 +153,38 @@ function updateLivePlotStatus(msg) {
 }
 
 function initCanvasOverlays() {
-    // Redraw plot canvas when entering step
-    subscribe('plot-canvas', (changed) => {
-        if (changed.currentStep === 4) {
-            redrawCanvas('plot-canvas');
-        }
+    document.getElementById('btn-plot-show-draw')?.addEventListener('click', function() {
+        this.classList.toggle('active');
+        setState({ showDraw: this.classList.contains('active') });
+        redrawCanvas('plot-canvas');
     });
+    document.getElementById('btn-plot-show-travel')?.addEventListener('click', function() {
+        this.classList.toggle('active');
+        setState({ showTravel: this.classList.contains('active') });
+        redrawCanvas('plot-canvas');
+    });
+    document.getElementById('btn-plot-show-grid')?.addEventListener('click', function() {
+        this.classList.toggle('active');
+        setState({ showGrid: this.classList.contains('active') });
+        redrawCanvas('plot-canvas');
+    });
+}
+
+function updateStatsDisplay(stats) {
+    const el = document.getElementById('plot-stats');
+    if (!el || !stats) return;
+    el.innerHTML = `
+        <div class="stat-item"><span class="stat-label">Strokes</span><span class="stat-value">${stats.stroke_count || 0}</span></div>
+        <div class="stat-item"><span class="stat-label">Distance</span><span class="stat-value">${(stats.draw_distance_mm || stats.total_distance || 0).toFixed(1)} mm</span></div>
+        <div class="stat-item"><span class="stat-label">Time</span><span class="stat-value">${formatTime(stats.estimated_time_s || stats.estimated_time || 0)}</span></div>
+        <div class="stat-item"><span class="stat-label">Lines</span><span class="stat-value">${getState().gcodeLineCount || 0}</span></div>
+    `;
+}
+
+function formatTime(seconds) {
+    if (!seconds || seconds <= 0) return '--';
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return `${m}m ${s}s`;
 }

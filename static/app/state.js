@@ -76,6 +76,29 @@ export function setState(updates) {
         }
     }
     if (Object.keys(changed).length) {
+        // Auto-update step completion
+        const newComplete = { ...state.stepComplete };
+        let completionChanged = false;
+
+        // Step 2 (Create) complete when SVG loaded
+        if (changed.currentSvgId !== undefined) {
+            const complete = !!changed.currentSvgId;
+            if (newComplete[2] !== complete) { newComplete[2] = complete; completionChanged = true; }
+        }
+        // Step 3 (Prepare) complete when G-code generated
+        if (changed.gcodeGenerated !== undefined) {
+            if (newComplete[3] !== changed.gcodeGenerated) { newComplete[3] = changed.gcodeGenerated; completionChanged = true; }
+        }
+        // Step 4 (Plot) complete when plotting finishes
+        if (changed.busy === false && state.stepComplete[3]) {
+            if (!newComplete[4]) { newComplete[4] = true; completionChanged = true; }
+        }
+
+        if (completionChanged) {
+            state.stepComplete = newComplete;
+            changed.stepComplete = newComplete;
+        }
+
         // Notify global listeners
         for (const [id, fn] of listeners) {
             try { fn(changed, state); } catch (e) { console.error('State listener error:', e); }

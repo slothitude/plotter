@@ -12,15 +12,18 @@ export function initPrepare() {
     initCanvasOverlays();
     initContinueButton();
 
-    subscribe('prepare', (changed, state) => {
+    subscribe('prepare', (changed) => {
         if (changed.polylines !== undefined || changed.toolpath !== undefined ||
-            changed.pageWidth !== undefined || changed.pageHeight !== undefined) {
+            changed.pageWidth !== undefined || changed.pageHeight !== undefined ||
+            changed.currentSvgId !== undefined) {
             redrawCanvas('prepare-canvas');
             updateInfo();
+            updateConvertButton();
         }
         if (changed.gcodeGenerated !== undefined) {
             const btn = document.getElementById('btn-prepare-continue');
             if (btn) btn.disabled = !changed.gcodeGenerated;
+            updateInfo();
         }
     });
 }
@@ -39,7 +42,7 @@ function initTransforms() {
         if (!slider) return;
 
         slider.addEventListener('input', () => {
-            const val = key === 'scale' ? parseFloat(slider.value) : parseFloat(slider.value);
+            const val = parseFloat(slider.value);
             if (display) display.textContent = fmt(slider.value);
             updateTransform(key, val);
         });
@@ -59,7 +62,6 @@ function initTransforms() {
     document.getElementById('btn-tf-reset')?.addEventListener('click', () => {
         const defaults = { scale: 1, rotate: 0, translate_x: 0, translate_y: 0, mirror_x: false, mirror_y: false, optimize: true, simplify: false };
         setState({ transform: defaults });
-        // Reset UI
         document.getElementById('tf-scale').value = 1;
         document.getElementById('tf-scale-val').textContent = '1.0';
         document.getElementById('tf-rotate').value = 0;
@@ -88,9 +90,16 @@ function initConvert() {
     document.getElementById('btn-download-gcode')?.addEventListener('click', downloadGcode);
 }
 
+function updateConvertButton() {
+    const btn = document.getElementById('btn-convert');
+    if (!btn) return;
+    const s = getState();
+    btn.disabled = !s.currentSvgId || s.gcodeGenerated;
+}
+
 function convertSvg() {
     const s = getState();
-    if (!s.currentSvgId) return;
+    if (!s.currentSvgId) return toast('Load an SVG first', 'warn');
 
     const t = s.transform;
     apiPost('/api/convert', {
@@ -119,17 +128,14 @@ function convertSvg() {
             stats: data.stats || null,
         });
 
-        // Update UI
+        // Update UI elements
         document.getElementById('btn-convert').disabled = true;
         document.getElementById('btn-download-gcode').disabled = false;
         document.getElementById('gcode-preview').textContent = data.gcode_preview || '';
         document.getElementById('gcode-lines').textContent = `${data.line_count} lines`;
-
-        // Stats
-        if (data.stats) updateStats(data.stats);
-
-        // Enable continue
         document.getElementById('btn-prepare-continue').disabled = false;
+
+        if (data.stats) updateStats(data.stats);
 
         redrawCanvas('prepare-canvas');
         toast('G-code generated', 'success');
@@ -147,13 +153,14 @@ function updateStats(stats) {
     if (!el || !stats) return;
     el.innerHTML = `
         <div class="stat-item"><span class="stat-label">Strokes</span><span class="stat-value">${stats.stroke_count || 0}</span></div>
-        <div class="stat-item"><span class="stat-label">Distance</span><span class="stat-value">${(stats.total_distance || 0).toFixed(1)} mm</span></div>
-        <div class="stat-item"><span class="stat-label">Time</span><span class="stat-value">${formatTime(stats.estimated_time || 0)}</span></div>
+        <div class="stat-item"><span class="stat-label">Distance</span><span class="stat-value">${(stats.draw_distance_mm || stats.total_distance || 0).toFixed(1)} mm</span></div>
+        <div class="stat-item"><span class="stat-label">Time</span><span class="stat-value">${formatTime(stats.estimated_time_s || stats.estimated_time || 0)}</span></div>
         <div class="stat-item"><span class="stat-label">Pen Ups</span><span class="stat-value">${stats.pen_ups || 0}</span></div>
     `;
 }
 
 function formatTime(seconds) {
+    if (!seconds || seconds <= 0) return '--';
     if (seconds < 60) return `${Math.round(seconds)}s`;
     const m = Math.floor(seconds / 60);
     const s = Math.round(seconds % 60);
@@ -167,7 +174,7 @@ function updateInfo() {
     if (s.currentSvgId) {
         el.textContent = `${s.strokeCount || 0} strokes` + (s.gcodeGenerated ? ' \u00b7 G-code ready' : '');
     } else {
-        el.textContent = 'No SVG loaded';
+        el.textContent = 'No SVG loaded — go to Create step first';
     }
 }
 
@@ -192,5 +199,11 @@ function initCanvasOverlays() {
 function initContinueButton() {
     const btn = document.getElementById('btn-prepare-continue');
     if (btn) btn.disabled = !getState().gcodeGenerated;
-    btn?.addEventListener('click', () => nextStep());
+    btn?.addEventListener('click', () => {
+        if (!getState().gcodeGenerated) {
+            toast('Generate G-code first', 'warn');
+            return;
+        }
+        nextStep();
+    });
 }
