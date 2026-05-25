@@ -20,6 +20,8 @@ from svgpathtools import (
 
 import config
 
+MIN_MOVE_DIST = 0.2  # mm — skip sub-threshold micro-moves
+
 
 # ── Data structures ─────────────────────────────────────────────────
 
@@ -518,6 +520,10 @@ def _emit_stroke_pass(
         draw_pts = [[sx, sy]]
         for i in range(1, len(polyline.points)):
             px, py = transform(*polyline.points[i])
+            dist = math.hypot(px - prev_pos[0], py - prev_pos[1])
+            # Skip micro-moves, but always keep last point of polyline
+            if dist < MIN_MOVE_DIST and i < len(polyline.points) - 1:
+                continue
             lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
             draw_pts.append([px, py])
             segment_count += 1
@@ -641,7 +647,6 @@ def polylines_to_gcode(
 
     toolpath_data is a list of dicts: {type: "draw"|"travel", points: [[x,y],...], layer: int}
     """
-    MIN_MOVE_DIST = 0.2  # mm — skip sub-threshold micro-moves
     if not polylines:
         return "", []
 

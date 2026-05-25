@@ -9,8 +9,8 @@ const PRESETS = [
     { label: 'A5', w: 148, h: 210 },
     { label: 'A4', w: 210, h: 297 },
     { label: 'A3', w: 297, h: 420 },
-    { label: '220mm', w: 220, h: 220 },
-    { label: 'Full', w: 220, h: 220 },
+    { label: 'Bed', w: 180, h: 175, ox: 5, oy: 5 },
+    { label: 'Bordered', w: 150, h: 145, ox: 15, oy: 15 },
 ];
 
 export function initPageSize() {
@@ -19,7 +19,7 @@ export function initPageSize() {
 
     container.innerHTML = `
         <div class="page-presets">
-            ${PRESETS.map(p => `<button class="preset-btn" data-w="${p.w}" data-h="${p.h}">${p.label}</button>`).join('')}
+            ${PRESETS.map(p => `<button class="preset-btn" data-w="${p.w}" data-h="${p.h}"${p.ox !== undefined ? ` data-ox="${p.ox}" data-oy="${p.oy}"` : ''}>${p.label}</button>`).join('')}
         </div>
         <div class="form-row mt-md">
             <label class="form-label">Width</label>
@@ -44,9 +44,13 @@ export function initPageSize() {
         btn.addEventListener('click', () => {
             const w = parseInt(btn.dataset.w);
             const h = parseInt(btn.dataset.h);
-            setPage(w, h);
+            const ox = btn.dataset.ox !== undefined ? parseInt(btn.dataset.ox) : undefined;
+            const oy = btn.dataset.oy !== undefined ? parseInt(btn.dataset.oy) : undefined;
+            setPage(w, h, ox, oy);
             document.getElementById('page-w').value = w;
             document.getElementById('page-h').value = h;
+            if (ox !== undefined) document.getElementById('page-ox').value = ox;
+            if (oy !== undefined) document.getElementById('page-oy').value = oy;
             container.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
         });

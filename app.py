@@ -48,6 +48,8 @@ def _ensure_connected():
     if port:
         try:
             serial.connect(port)
+            time.sleep(1)
+            serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; safe height on connect")
             return True
         except Exception:
             return False
@@ -242,6 +244,8 @@ def serial_connect():
     try:
         serial.connect(port, baudrate)
         SERIAL_PORT_FILE.write_text(port)
+        time.sleep(1)
+        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; safe height on connect")
         return jsonify({"ok": True, "port": port})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1501,15 +1505,15 @@ def home():
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     try:
-        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # lift Z first
+        serial.send_command("G1 Z30.000 F3000")                       # lift to safe height
         time.sleep(1.5)
         serial.send_command("G28")                                    # home to establish position
         time.sleep(12)                                                # wait for homing to complete
-        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # raise to safe
+        serial.send_command("G1 Z30.000 F3000")                       # raise to safe height
         time.sleep(1.5)
-        serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to water cup
+        serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to origin
         time.sleep(3)
-        serial.send_command("G1 Z0.000 F300")                         # lower to rest
+        serial.send_command("G1 Z30.000 F300")                        # park at Z30
         time.sleep(1.5)
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})

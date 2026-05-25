@@ -18,7 +18,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 
 PRINTER_BED_X = 220.0  # mm
 PRINTER_BED_Y = 220.0  # mm
-SAFE_Z = 20.0           # Minimum Z height for all non-drawing moves (travel)
+SAFE_Z = 35.0           # Minimum Z height for all non-drawing moves (travel)
 
 
 # ── Page size presets ────────────────────────────────────────────────

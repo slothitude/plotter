@@ -33,8 +33,21 @@ function populateFields(settings) {
     setVal('set-z-draw-speed', mv.z_draw_speed);
 
     const water = settings.water || {};
-    setVal('set-water-interval', water.dip_interval || 0);
-    setVal('set-water-duration', water.dip_duration || 500);
+    setVal('set-water-cup-x', water.cup_x ?? 0);
+    setVal('set-water-cup-y', water.cup_y ?? 0);
+    setVal('set-water-cup-height', water.cup_height ?? 15);
+    setVal('set-water-dip-depth', water.dip_depth ?? 15);
+    setVal('set-water-interval', water.dip_interval ?? 50);
+    setVal('set-water-duration', water.dip_time ?? 500);
+    setVal('set-water-scrape-dist', water.scrape_distance ?? 15);
+    setVal('set-water-scrape-speed', water.scrape_speed ?? 300);
+    setChecked('set-water-two-pass', water.two_pass ?? true);
+
+    const pass2 = water.pass2 || {};
+    setVal('set-water-p2-draw', pass2.draw_speed ?? 800);
+    setVal('set-water-p2-travel', pass2.travel_speed ?? 2500);
+    setVal('set-water-p2-down', pass2.pen_down_z ?? 0);
+    setVal('set-water-p2-lift', pass2.lift_height ?? 5);
 
     const fill = settings.fill || {};
     setVal('set-fill-mode', fill.mode || 'none');
@@ -48,10 +61,23 @@ function setVal(id, val) {
     if (el) el.value = val;
 }
 
+function setChecked(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.checked = val;
+}
+
+function getChecked(id) {
+    const el = document.getElementById(id);
+    return el ? el.checked : false;
+}
+
 function bindSettings() {
     const fields = [
         'set-travel-speed', 'set-draw-speed', 'set-z-travel-speed', 'set-z-draw-speed',
-        'set-water-interval', 'set-water-duration',
+        'set-water-cup-x', 'set-water-cup-y', 'set-water-cup-height', 'set-water-dip-depth',
+        'set-water-interval', 'set-water-duration', 'set-water-scrape-dist', 'set-water-scrape-speed',
+        'set-water-two-pass',
+        'set-water-p2-draw', 'set-water-p2-travel', 'set-water-p2-down', 'set-water-p2-lift',
         'set-fill-mode', 'set-fill-spacing', 'set-fill-angle', 'set-fill-inset',
     ];
 
@@ -77,8 +103,21 @@ function autoSave() {
             z_draw_speed: getNum('set-z-draw-speed', 1000),
         },
         water: {
-            dip_interval: getNum('set-water-interval', 0),
-            dip_duration: getNum('set-water-duration', 500),
+            cup_x: getNum('set-water-cup-x', 0),
+            cup_y: getNum('set-water-cup-y', 0),
+            cup_height: getNum('set-water-cup-height', 15),
+            dip_depth: getNum('set-water-dip-depth', 15),
+            dip_interval: getNum('set-water-interval', 50),
+            dip_time: getNum('set-water-duration', 500),
+            scrape_distance: getNum('set-water-scrape-dist', 15),
+            scrape_speed: getNum('set-water-scrape-speed', 300),
+            two_pass: getChecked('set-water-two-pass'),
+            pass2: {
+                draw_speed: getNum('set-water-p2-draw', 800),
+                travel_speed: getNum('set-water-p2-travel', 2500),
+                pen_down_z: getNum('set-water-p2-down', 0),
+                lift_height: getNum('set-water-p2-lift', 5),
+            },
         },
         fill: {
             mode: getStr('set-fill-mode', 'none'),
