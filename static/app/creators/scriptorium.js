@@ -12,19 +12,18 @@ export function initScriptorium() {
 function generate() {
     const text = document.getElementById('script-text')?.value;
     if (!text) return toast('Enter some text first', 'warn');
+    if (text.length > 500) return toast('Text too long (max 500 characters)', 'warn');
 
     const s = getState();
-    const size = parseFloat(document.getElementById('script-size')?.value) || 10;
+    const fontSize = parseFloat(document.getElementById('script-size')?.value) || 25;
     const spacing = parseFloat(document.getElementById('script-spacing')?.value) || 2;
     const font = document.getElementById('script-font')?.value || 'hershey';
-    const fontSize = parseFloat(document.getElementById('script-size')?.value) || 25;
 
     apiPost('/api/test-pattern', {
         pattern: 'text',
         text,
         font,
         font_size: fontSize,
-        size,
         tool: s.tool,
         page_width: s.pageWidth,
         page_height: s.pageHeight,
@@ -39,10 +38,10 @@ function generate() {
         setState({
             currentSvgId: data.id,
             polylines: data.polylines || null,
-            toolpath: data.toolpath || [],
+            toolpath: [],
             strokeCount: data.stroke_count || 0,
-            stats: data.stats || null,
-            gcodeGenerated: !!data.has_gcode,
+            stats: null,
+            gcodeGenerated: false,
         });
 
         redrawCanvas('create-canvas');

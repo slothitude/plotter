@@ -10,7 +10,7 @@ const state = {
     position: { X: 0, Y: 0, Z: 0 },
 
     // Current tool (single source of truth)
-    tool: 'pencil',
+    tool: 'pen',
 
     // Page
     pageWidth: 220,

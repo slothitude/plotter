@@ -621,6 +621,7 @@ def polylines_to_gcode(
 
     toolpath_data is a list of dicts: {type: "draw"|"travel", points: [[x,y],...], layer: int}
     """
+    MIN_MOVE_DIST = 0.2  # mm — skip sub-threshold micro-moves
     if not polylines:
         return "", []
 
@@ -637,27 +638,23 @@ def polylines_to_gcode(
                 simplified.append(Polyline(points=pts, layer=pl.layer, color=pl.color))
         polylines = simplified
 
-    # 2. Apply user transforms: scale → rotate → mirror → translate
-    if user_scale != 1.0 or user_rotate != 0.0 or mirror_x or mirror_y or user_translate_x != 0.0 or user_translate_y != 0.0:
+    # 2. Apply user transforms: rotate → mirror
+    # (scale and translate are applied later, after auto-fit)
+    if user_rotate != 0.0 or mirror_x or mirror_y:
         transformed = []
         cos_r = math.cos(math.radians(user_rotate))
         sin_r = math.sin(math.radians(user_rotate))
         for pl in polylines:
             new_pts = []
             for px, py in pl.points:
-                # Scale
-                x, y = px * user_scale, py * user_scale
                 # Rotate
-                rx = x * cos_r - y * sin_r
-                ry = x * sin_r + y * cos_r
+                rx = px * cos_r - py * sin_r
+                ry = px * sin_r + py * cos_r
                 # Mirror
                 if mirror_x:
                     rx = -rx
                 if mirror_y:
                     ry = -ry
-                # Translate
-                rx += user_translate_x
-                ry += user_translate_y
                 new_pts.append((rx, ry))
             transformed.append(Polyline(points=new_pts, layer=pl.layer, color=pl.color))
         polylines = transformed
@@ -676,8 +673,8 @@ def polylines_to_gcode(
     svg_h = max_y - min_y
 
     # Pen offset: raw physical offset from hotend to pen.
-    # Negative = pen is left/below hotend. Used directly:
-    #   hotend_pos = pen_target - offset
+    # Negative = pen is left/below hotend.
+    # hotend_pos = pen_target - offset
     pen_dx = ht.offset_x
     pen_dy = ht.offset_y
 
@@ -685,9 +682,9 @@ def polylines_to_gcode(
     phys_bed_x = config.PRINTER_BED_X
     phys_bed_y = config.PRINTER_BED_Y
 
-    # Effective drawing area: pen can reach phys_bed + offset in each axis
-    # Hotend range: 0 to phys_bed. Pen range: offset to phys_bed + offset.
-    # Usable pen range (clipped to 0..phys_bed): max(0, offset) to min(phys_bed, phys_bed + offset)
+    # Auto-fit: scale so pen stays within 0..phys_bed
+    # Pen range = hotend_range + offset = (0+offset) to (phys_bed+offset)
+    # Clipped to physical bed: max(0, offset) to min(phys_bed, phys_bed+offset)
     eff_min_x = max(0, pen_dx)
     eff_max_x = min(phys_bed_x, phys_bed_x + pen_dx)
     eff_min_y = max(0, pen_dy)
@@ -710,6 +707,9 @@ def polylines_to_gcode(
     else:
         scale = 1.0
 
+    # Apply user scale on top of auto-fit
+    scale *= user_scale
+
     scaled_w = svg_w * scale
     scaled_h = svg_h * scale
     # Center drawing within the effective drawing area (pen coordinates)
@@ -726,8 +726,8 @@ def polylines_to_gcode(
 
     def transform(px, py):
         # Compute position in bed coordinates, then convert to hotend coordinates
-        bed_px = px * scale + offset_x + page_offset_x
-        bed_py = py * scale + offset_y + page_offset_y
+        bed_px = px * scale + offset_x + page_offset_x + user_translate_x
+        bed_py = py * scale + offset_y + page_offset_y + user_translate_y
         return (round(bed_px - pen_dx, 3),
                 round(bed_py - pen_dy, 3))
 
@@ -798,9 +798,12 @@ def polylines_to_gcode(
         draw_pts = [[sx, sy]]
         for i in range(1, len(polyline.points)):
             px, py = transform(*polyline.points[i])
+            dist = math.hypot(px - prev_pos[0], py - prev_pos[1])
+            # Skip micro-moves, but always keep last point of polyline
+            if dist < MIN_MOVE_DIST and i < len(polyline.points) - 1:
+                continue
             if mv.wear_rate > 0:
-                seg_dist = math.hypot(px - prev_pos[0], py - prev_pos[1])
-                cumulative_draw_dist += seg_dist
+                cumulative_draw_dist += dist
                 wear = cumulative_draw_dist / 1000.0 * mv.wear_rate
                 if mv.max_wear_depth > 0:
                     wear = min(wear, mv.max_wear_depth)

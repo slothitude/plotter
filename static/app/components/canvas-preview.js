@@ -63,11 +63,9 @@ export function drawCanvas(canvasId, state) {
         drawPolylines(ctx, ox, oy, scale, transformed, '#5b9bd5');
     }
 
-    // Toolpath (G-code preview — also apply transforms since backend returns raw path)
+    // Toolpath (G-code preview — already in bed coordinates, render directly)
     if (s.toolpath && s.toolpath.length > 0) {
-        const t = s.transform || {};
-        const transformedToolpath = applyTransformsToToolpath(s.toolpath, t, s.pageWidth || 220, s.pageHeight || 220);
-        drawToolpath(ctx, ox, oy, scale, transformedToolpath, s.showDraw, s.showTravel);
+        drawToolpath(ctx, ox, oy, scale, s.toolpath, s.showDraw, s.showTravel);
     }
 }
 
@@ -153,16 +151,13 @@ function applyTransforms(polylines, t, pageW, pageH) {
         if (!pts || pts.length < 2) return poly;
 
         return pts.map(([x, y]) => {
-            // Translate to center
+            // Translate to center origin
             let px = x - cx;
             let py = y - cy;
-            // Mirror
-            if (mx) px = -px;
-            if (my) py = -py;
-            // Scale
+            // Scale (matches backend: scale first)
             px *= sc;
             py *= sc;
-            // Rotate
+            // Rotate (matches backend: rotate second)
             if (rot) {
                 const cos = Math.cos(rot);
                 const sin = Math.sin(rot);
@@ -171,47 +166,14 @@ function applyTransforms(polylines, t, pageW, pageH) {
                 px = rx;
                 py = ry;
             }
-            // Translate back + user offset
-            px += cx + tx;
-            py += cy + ty;
-            return [px, py];
-        });
-    });
-}
-
-function applyTransformsToToolpath(toolpath, t, pageW, pageH) {
-    const sc = t.scale || 1;
-    const rot = (t.rotate || 0) * Math.PI / 180;
-    const tx = t.translate_x || 0;
-    const ty = t.translate_y || 0;
-    const mx = t.mirror_x;
-    const my = t.mirror_y;
-    const cx = pageW / 2;
-    const cy = pageH / 2;
-
-    return toolpath.map(seg => {
-        const pts = seg.points;
-        if (!pts || pts.length < 2) return seg;
-        const newPts = pts.map(([x, y]) => {
-            let px = x - cx;
-            let py = y - cy;
+            // Mirror (matches backend: mirror third)
             if (mx) px = -px;
             if (my) py = -py;
-            px *= sc;
-            py *= sc;
-            if (rot) {
-                const cos = Math.cos(rot);
-                const sin = Math.sin(rot);
-                const rx = px * cos - py * sin;
-                const ry = px * sin + py * cos;
-                px = rx;
-                py = ry;
-            }
+            // Translate back + user offset (matches backend: translate last)
             px += cx + tx;
             py += cy + ty;
             return [px, py];
         });
-        return { ...seg, points: newPts };
     });
 }
 

@@ -175,14 +175,27 @@ def load_profile(tool_name: str) -> ToolProfile:
 
 
 def save_profile(tool_name: str, profile: ToolProfile):
-    """Save a tool profile back to TOML."""
+    """Save a tool profile back to TOML (base values only, not calibration overrides)."""
     path = _profile_path(tool_name)
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Use raw TOML height values to avoid baking calibrated data into the base file
+    try:
+        raw_toml = toml.loads(path.read_text(encoding="utf-8"))
+        raw_height = raw_toml.get("height", {})
+    except Exception:
+        raw_height = {}
+
+    height_data = asdict(profile.height)
+    # Override calibrated values with raw TOML base values
+    for key in ("pen_down_z", "pen_up_z", "offset_x", "offset_y"):
+        if key in raw_height:
+            height_data[key] = raw_height[key]
 
     data = {
         "tool": {"name": profile.name},
         "movement": asdict(profile.movement),
-        "height": asdict(profile.height),
+        "height": height_data,
         "water": asdict(profile.water),
         "fill": asdict(profile.fill),
     }

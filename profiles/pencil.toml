@@ -9,6 +9,8 @@ lift_height = 5.0
 [height]
 pen_down_z = 0.0
 pen_up_z = 5.0
+offset_x = -30.0
+offset_y = -30.0
 
 [water]
 enabled = false
