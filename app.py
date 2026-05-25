@@ -1511,6 +1511,7 @@ def mark_page():
     try:
         serial.send_command(f"G90 ; Absolute positioning")
         serial.send_command(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe Z")
+        time.sleep(1)
 
         for i, (bx, by) in enumerate(corners_bed):
             # Convert bed coords to hotend coords (same as gcode.py transform)
@@ -1522,10 +1523,15 @@ def mark_page():
             dy = arm if i in (0, 1) else -arm
 
             serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} F{mv.travel_speed:.0f} ; Corner {i+1}")
+            time.sleep(1)
             serial.send_command(f"G1 Z{pen_down_z:.3f} F300 ; Pen down")
+            time.sleep(0.5)
             serial.send_command(f"G1 X{hx + dx:.3f} Y{hy:.3f} F500 ; Mark X")
+            time.sleep(0.5)
             serial.send_command(f"G1 X{hx + dx:.3f} Y{hy + dy:.3f} F500 ; Mark Y")
+            time.sleep(0.5)
             serial.send_command(f"G1 Z{safe_z:.3f} F300 ; Pen up")
+            time.sleep(0.5)
 
         serial.send_command("G0 X0 Y0 F3000 ; Return home")
         return jsonify({"ok": True})
