@@ -1485,12 +1485,23 @@ def mark_page():
     pen_dx = ht.offset_x
     pen_dy = ht.offset_y
 
-    # Page corners in bed coordinates
+    # Effective pen area (same math as gcode.py)
+    eff_min_x = max(0, pen_dx)
+    eff_max_x = min(config.PRINTER_BED_X, config.PRINTER_BED_X + pen_dx)
+    eff_min_y = max(0, pen_dy)
+    eff_max_y = min(config.PRINTER_BED_Y, config.PRINTER_BED_Y + pen_dy)
+
+    # Page corners clamped to effective area (pen can't reach beyond this)
+    x0 = max(pox, eff_min_x)
+    y0 = max(poy, eff_min_y)
+    x1 = min(pox + pw, eff_max_x)
+    y1 = min(poy + ph, eff_max_y)
+
     corners_bed = [
-        (pox, poy),                  # front-left
-        (pox + pw, poy),             # front-right
-        (pox + pw, poy + ph),        # back-right
-        (pox, poy + ph),             # back-left
+        (x0, y0),         # front-left
+        (x1, y0),         # front-right
+        (x1, y1),         # back-right
+        (x0, y1),         # back-left
     ]
 
     safe_z = config.SAFE_Z
