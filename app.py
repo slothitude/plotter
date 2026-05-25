@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -61,7 +62,8 @@ _slate_process: subprocess.Popen | None = None
 _ink_strokes: list = []  # accumulated BLE streamed strokes from capture.py
 PENZ_DIR = r"C:\Users\aaron\penz"
 
-# Live plot state
+# Live plot state (accessed from Flask threads + serial thread)
+_live_lock = threading.Lock()
 _live_plot_active = False
 _live_plot_profile = None
 _live_stroke_points: list = []  # accumulate mm points for current stroke
@@ -108,7 +110,10 @@ def _broadcast_progress(completed, total, info):
         try:
             ws.send(msg)
         except Exception:
-            ws_clients.remove(ws)
+            try:
+                ws_clients.remove(ws)
+            except ValueError:
+                pass
 
 
 def _broadcast_ink(points):
@@ -118,7 +123,10 @@ def _broadcast_ink(points):
         try:
             ws.send(msg)
         except Exception:
-            ws_clients.remove(ws)
+            try:
+                ws_clients.remove(ws)
+            except ValueError:
+                pass
 
 
 @sock.route("/ws")
@@ -776,21 +784,23 @@ def ink_stream():
         _broadcast_ink(points)
 
         # Live plot: map points to bed mm and accumulate
-        if _live_plot_active and _live_plot_profile and serial.is_connected:
-            page = config.load_page_size()
-            pw, ph = page["width"], page["height"]
-            for pt in points:
-                if len(pt) >= 2:
-                    mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
-                    _live_stroke_points.append((mx, my))
+        with _live_lock:
+            if _live_plot_active and _live_plot_profile and serial.is_connected:
+                page = config.load_page_size()
+                pw, ph = page["width"], page["height"]
+                for pt in points:
+                    if len(pt) >= 2:
+                        mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
+                        _live_stroke_points.append((mx, my))
 
     # Stroke complete: generate G-code and queue for plotter
-    if stroke_end and _live_plot_active and _live_stroke_points and serial.is_connected:
-        gcode_lines = _stroke_to_gcode(_live_stroke_points, _live_plot_profile)
-        if gcode_lines:
-            serial.queue_stroke(gcode_lines)
-            print(f"  LIVE PLOT: queued stroke ({len(gcode_lines)} lines)", flush=True)
-        _live_stroke_points = []
+    with _live_lock:
+        if stroke_end and _live_plot_active and _live_stroke_points and serial.is_connected:
+            gcode_lines = _stroke_to_gcode(_live_stroke_points, _live_plot_profile)
+            if gcode_lines:
+                serial.queue_stroke(gcode_lines)
+                print(f"  LIVE PLOT: queued stroke ({len(gcode_lines)} lines)", flush=True)
+            _live_stroke_points = []
 
     return jsonify({"status": "ok"})
 
