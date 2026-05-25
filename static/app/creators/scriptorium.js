@@ -12,7 +12,7 @@ export function initScriptorium() {
 function generate() {
     const text = document.getElementById('script-text')?.value;
     if (!text) return toast('Enter some text first', 'warn');
-    if (text.length > 500) return toast('Text too long (max 500 characters)', 'warn');
+    if (text.length > 5000) return toast('Text too long (max 5000 characters)', 'warn');
 
     const s = getState();
     const fontSize = parseFloat(document.getElementById('script-size')?.value) || 25;
