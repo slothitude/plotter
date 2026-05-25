@@ -267,24 +267,35 @@ def _perpendicular_distance(point, line_start, line_end):
 
 
 def simplify_polyline(points: list[tuple[float, float]], tolerance: float = 0.1) -> list[tuple[float, float]]:
-    """Ramer-Douglas-Peucker simplification."""
+    """Ramer-Douglas-Peucker simplification (iterative, stack-safe)."""
     if len(points) <= 2:
         return points
 
-    max_dist = 0
-    max_idx = 0
-    for i in range(1, len(points) - 1):
-        d = _perpendicular_distance(points[i], points[0], points[-1])
-        if d > max_dist:
-            max_dist = d
-            max_idx = i
+    # Bitmask: True = keep this point
+    keep = [False] * len(points)
+    keep[0] = True
+    keep[-1] = True
 
-    if max_dist > tolerance:
-        left = simplify_polyline(points[:max_idx + 1], tolerance)
-        right = simplify_polyline(points[max_idx:], tolerance)
-        return left[:-1] + right
-    else:
-        return [points[0], points[-1]]
+    stack = [(0, len(points) - 1)]
+    while stack:
+        start, end = stack.pop()
+        if end - start < 2:
+            continue
+
+        max_dist = 0.0
+        max_idx = start
+        for i in range(start + 1, end):
+            d = _perpendicular_distance(points[i], points[start], points[end])
+            if d > max_dist:
+                max_dist = d
+                max_idx = i
+
+        if max_dist > tolerance:
+            keep[max_idx] = True
+            stack.append((start, max_idx))
+            stack.append((max_idx, end))
+
+    return [points[i] for i in range(len(points)) if keep[i]]
 
 
 # ── Stats ───────────────────────────────────────────────────────────
