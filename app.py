@@ -1471,17 +1471,12 @@ def mark_page():
     ht = profile.height
     mv = profile.movement
 
-    # Compute pen offset (same math as gcode.py)
-    pen_ox = ht.offset_x
-    pen_oy = ht.offset_y
-    if pen_ox != 0 or pen_oy != 0:
-        pen_phys_x = -(pen_ox - config.PRINTER_BED_X / 2)
-        pen_phys_y = -(pen_oy - config.PRINTER_BED_Y / 2)
-    else:
-        pen_phys_x, pen_phys_y = 0, 0
+    # Pen offset: hotend = bed_pos - offset (same as gcode.py transform)
+    pen_dx = ht.offset_x
+    pen_dy = ht.offset_y
 
-    # Page corners in pen-space → convert to hotend-space
-    corners_pen = [
+    # Page corners in bed coordinates
+    corners_bed = [
         (pox, poy),                  # front-left
         (pox + pw, poy),             # front-right
         (pox + pw, poy + ph),        # back-right
@@ -1496,10 +1491,10 @@ def mark_page():
         serial.send_command(f"G90 ; Absolute positioning")
         serial.send_command(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe Z")
 
-        for i, (cpx, cpy) in enumerate(corners_pen):
-            # Convert to hotend coords
-            hx = cpx - pen_phys_x
-            hy = cpy - pen_phys_y
+        for i, (bx, by) in enumerate(corners_bed):
+            # Convert bed coords to hotend coords (same as gcode.py transform)
+            hx = round(bx - pen_dx, 3)
+            hy = round(by - pen_dy, 3)
 
             # Draw L-shape at corner
             dx = arm if i in (0, 3) else -arm  # mark inward
