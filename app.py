@@ -948,8 +948,12 @@ def ink_load_page():
     if not filename:
         return jsonify({"error": "filename required"}), 400
 
-    src = os.path.join(PENZ_DIR, "data", "pages", filename)
-    if not os.path.isfile(src):
+    # Prevent path traversal: resolve and verify it stays within pages dir
+    pages_dir = Path(PENZ_DIR) / "data" / "pages"
+    src = (pages_dir / filename).resolve()
+    if not str(src).startswith(str(pages_dir.resolve())):
+        return jsonify({"error": "Invalid path"}), 403
+    if not src.is_file():
         return jsonify({"error": "Page not found"}), 404
 
     file_id = uuid.uuid4().hex[:8]
