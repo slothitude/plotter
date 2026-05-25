@@ -55,6 +55,11 @@ class SerialConnection:
         self._stop_requested = True
         self._sending = False
         self._live_sending = False
+        # Wait for threads to finish before closing serial
+        if self._sender_thread and self._sender_thread.is_alive():
+            self._sender_thread.join(timeout=3)
+        if self._live_thread and self._live_thread.is_alive():
+            self._live_thread.join(timeout=3)
         if self._serial and self._serial.is_open:
             try:
                 self._serial.close()
