@@ -1,8 +1,17 @@
 # Plotter
 
-Web-controlled pen plotter built on a 3D printer. Upload SVGs, convert to G-code, and draw with pencil, pen, or watercolor — all from a browser.
+Turn any Marlin-compatible 3D printer into a pen plotter. Upload SVGs, write cursive text, trace images, or draw freehand on a Wacom Slate — all from your browser.
 
-Flask backend + Hershey vector font + serial streaming to any Marlin-compatible printer.
+Single Python file backend. No build step. No framework. Plug in a pen and draw.
+
+## What It Does
+
+- **SVG plotting** — upload any SVG, it auto-fits to your page and draws it stroke by stroke
+- **Cursive writing** — Hershey and Script Simplex fonts with automatic word-wrap and paragraph support
+- **Image tracing** — convert photos to plotter-ready SVGs via edge detection
+- **Live drawing** — draw on a Wacom Bamboo Slate and watch it plot in real time over BLE
+- **Handwriting OCR** — capture ink strokes from the Slate, recognize handwriting with vision LLMs
+- **Watercolor** — two-pass mode: dry pencil guide, then wet brush retrace with automatic water cup dips
 
 ## Quick Start
 
@@ -11,47 +20,123 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://localhost:5000`. Pick a serial port, hit Connect. You're in.
+Open `http://localhost:5000`. If a printer is connected, it auto-detects and connects. Pick a tool, load some content, hit Plot.
 
-## Full Workflow
+## Workflow
 
-1. **Calibrate** the tool (Z height + XY offset) — see [Calibration](#calibration)
-2. **Position the page** on the bed — see [Page Positioning](#page-positioning)
-3. **Upload an SVG** (drag-and-drop or click)
-4. **Adjust transforms** — scale, rotate, mirror, offset
-5. **Convert** to G-code
-6. **Start Plot** — watch it draw with real-time progress
+The UI walks through 5 steps:
+
+1. **Setup** — connect to printer, calibrate tool Z height and XY offset, level the bed
+2. **Create** — upload SVG, generate test patterns, write text, trace images, or draw freehand
+3. **Prepare** — adjust transforms (scale, rotate, mirror), convert to G-code, preview toolpath
+4. **Plot** — stream G-code to printer with real-time progress via WebSocket
+5. **Config** — edit tool profiles, page size, watercolor settings
+
+## Text & Typography
+
+The Scriptorium panel generates plotter-ready text with two fonts:
+
+- **Hershey** — single-stroke Gothic, clean and technical
+- **Script Simplex** — cursive, lowercase letters chained into continuous strokes
+
+Both fonts are vector-only (no fills), designed for pen plotters. Text is rendered in page-space with automatic word-wrap:
+
+- Measures word widths in mm to wrap within page margins
+- Supports multi-paragraph text with `\n` line breaks
+- Configurable font size, margin, and line spacing
+- Cursive defaults to 2.0x line spacing to prevent descender overlap
+
+```json
+POST /api/test-pattern
+{
+  "pattern": "text",
+  "text": "Hello world",
+  "font": "cursive",
+  "font_size": 5,
+  "page_width": 148,
+  "page_height": 210
+}
+```
+
+## Image Tracing
+
+Upload a photo and convert it to a plotter-ready SVG via an OpenCV pipeline:
+
+1. Resize, grayscale, bilateral filter
+2. Posterize to reduce gray levels
+3. Canny edge detection
+4. Find and simplify contours
+5. Scale pixel coords to page mm, flip Y for printer coords
+
+Configurable: Canny thresholds, blur, posterize levels, contour simplification (epsilon), invert for dark-on-light images.
+
+## Live Plot (Wacom Slate)
+
+Draw on a Wacom Bamboo Slate with a real pen and the plotter traces your strokes in real time over Bluetooth LE.
+
+```
+Slate pen down → BLE stream → capture.py → POST /stream/stroke
+  → app.py maps coords to bed mm → G-code → serial queue → plotter draws
+```
+
+Each completed stroke (pen up) is immediately converted to G-code and queued. The plotter draws stroke by stroke as you write.
+
+## Ink Capture & OCR
+
+Capture freehand drawings from the Slate, then run OCR on handwritten content:
+
+1. **Capture** — stream BLE strokes from Slate, accumulate into SVG
+2. **OCR** — render SVG to PNG, detect text vs drawing regions via connected components, send to vision LLM chain (NVIDIA NIM → ZhipuAI → Ollama)
+3. Returns transcribed text with region classification
+
+## SVG Pipeline
+
+```
+Upload SVG
+  → parse (svgpathtools — path, rect, circle, ellipse, line, polyline, polygon)
+  → flatten curves (64 segments each)
+  → simplify (Ramer-Douglas-Peucker, optional)
+  → fill generation (hatch/crosshatch, optional)
+  → user transforms (rotate → mirror)
+  → optimize path order (nearest-neighbor, optional)
+  → auto-scale & center to effective drawing area
+  → apply pen offset + page offset
+  → micro-move filter (skip < 0.2mm G1 moves)
+  → G-code output
+```
+
+The pipeline accounts for the physical pen offset from the hotend. It computes the effective drawing area (where the pen can actually reach) and auto-fits content within it. The pen XY offset and Z calibration are stored per-tool in `calibration.json`, overriding the TOML base values.
 
 ## Calibration
 
-Each tool (pencil, pen, watercolor) stores its own calibration in `calibration.json`.
+Each tool (pencil, pen, watercolor) has independent calibration stored in `calibration.json`:
 
-### Z Height
+- **Z height** — jog Z down until pen contacts paper, save as pen-down height
+- **XY offset** — distance from hotend to pen tip (measured with a ruler or calculated from known position)
+- **Bed leveling** — guided 4-point L-mark workflow
 
-1. Select tool tab in the Calibration panel
-2. Click **Start Calibration** — printer moves to bed center (Z20 X110 Y110)
-3. Insert pen, click **Pen Loaded** — Z raises 5mm for clearance
-4. Jog Z down using step buttons (1mm → 0.1mm → 0.01mm) until the pen just touches paper
-5. Click **Save Pen-Down Height** — saves current Z as contact height
-6. **Test Dot** — lowers pen for 1 second to verify contact
+The effective drawing area is computed from the bed size minus the pen offset. With a -40, -45mm offset on a 220mm bed, the pen can reach X: 0–180mm, Y: 0–175mm.
 
-### Pen XY Offset
+## Tool Profiles
 
-Accounts for the pen tip being offset from the hotend mount point.
+Three profiles in `profiles/`:
 
-**Read Current** — move the pen tip to bed center (110, 110), then click this. It reads the hotend position and calculates the offset automatically.
+| Profile | Draw Speed | Travel Speed | Lift Height | Notes |
+|---------|-----------|-------------|-------------|-------|
+| Pencil  | 1500 mm/min | 3000 mm/min | 5.0 mm | Graphite wear compensation |
+| Pen     | 1200 mm/min | 3000 mm/min | 3.0 mm | Default tool |
+| Watercolor | 1000 mm/min | 2500 mm/min | 5.0 mm | Two-pass, water cup dips |
 
-**Manual Input** — enter X/Y offset values directly, then **Save Offset**.
+Settings include: draw/travel speed, lift height, graphite wear rate + max depth, water cup position/dip/scrape, fill/hatch config. Editable via UI or TOML files directly.
 
-The effective drawing area shrinks to account for the offset. The UI shows the resulting area.
+## Watercolor Two-Pass
 
-### Bed Leveling
+1. **Pass 1** — draw full image with pencil (guide layer)
+2. **Pause** — printer parks at tool change position, `M0` wait
+3. **Swap** — replace pencil with wet brush, press resume
+4. **Pass 2** — retrace all paths with wet brush at slower speed, with periodic water cup dips (lower into cup, dwell, scrape excess, return to drawing)
 
-The Calibration panel includes a guided 4-point bed leveling workflow: **Start** → **Next** (moves to next corner) → adjust knobs → **Repeat** or **Stop**.
-
-## Page Positioning
-
-### Presets
+## Page Presets
 
 | Preset | Size (mm) |
 |--------|-----------|
@@ -59,217 +144,73 @@ The Calibration panel includes a guided 4-point bed leveling workflow: **Start**
 | A4     | 210 × 297 |
 | A5     | 148 × 210 |
 | Letter | 216 × 279 |
-| 4x6    | 102 × 152 |
-| 5x7    | 127 × 178 |
+| 4×6    | 102 × 152 |
+| 5×7    | 127 × 178 |
 | Custom | any dimensions |
 
-Selecting a preset auto-centers the page on the bed.
+Pages auto-center on the bed. Fine-tune with X/Y offset. **Mark Page Outline** draws L-shaped corner marks to verify alignment before plotting.
 
-### Offsets
+## Serial Communication
 
-Fine-tune page placement with X/Y offset fields — distance from bed edge to page edge.
+- Thread-safe PySerial with `"ok"` acknowledgment flow — one command at a time
+- Auto-connect on startup to cached serial port
+- 10-second ack timeout per command with diagnostic logging
+- Auto-reconnect and park if serial drops mid-print
+- Emergency stop sends `M112` immediately
 
-### Mark Page Outline
-
-Draws L-shaped corner marks (10mm arms) at all four corners using the current tool's Z calibration. Use this to verify page alignment before plotting.
-
-## Tool Profiles
-
-Three profiles ship in `profiles/`:
-
-| Profile | Draw Speed | Travel Speed | Lift Height | Water |
-|---------|-----------|-------------|-------------|-------|
-| Pencil  | 1500 mm/min | 3000 mm/min | 5.0 mm | Off |
-| Pen     | 1200 mm/min | 3000 mm/min | 3.0 mm | Off |
-| Watercolor | 1000 mm/min | 2500 mm/min | 5.0 mm | On (two-pass) |
-
-All settings are editable from the Settings panel per tool:
-
-- **Movement** — draw speed, travel speed, lift height
-- **Graphite Wear** — Z drop per meter drawn, max depth cap (for pencils that wear down)
-- **Water/Brush** — cup position, dip depth/time/interval, scrape distance/speed
-- **Pass 2** — wet brush speeds, park position for tool swap
-- **Fill/Hatch** — enabled, type (hatch or crosshatch), spacing, angle
-
-Profiles are TOML files — edit directly or use the UI.
-
-## Watercolor Two-Pass
-
-When watercolor two-pass is enabled, plotting happens in two phases:
-
-### Pass 1 — Dry Pencil
-
-Draws the full image with pencil at normal speed. No water. Creates the guide layer.
-
-### Tool Change
-
-Printer raises to safe Z (default 50mm), moves to park position (default X110 Y110), and pauses with `M0`. The display shows "Swap pencil for wet brush." Swap the tool and press resume on the printer.
-
-### Pass 2 — Wet Brush Retrace
-
-Retraces the same paths with the wet brush at slower speed (default 800 mm/min). Periodic water dips occur every N segments:
-
-1. Raise to safe Z
-2. Move to cup position
-3. Lower into cup (dip depth)
-4. Dwell (dip time)
-5. Raise to cup rim
-6. Scrape sideways to remove excess water
-7. Raise to safe Z, return to drawing
-
-Configure dip interval, depth, dwell time, and scrape in the watercolor profile settings.
-
-## Tool Change
-
-The park position is configurable per tool in profile settings (Pass 2 section):
-
-- **change_z** — safe height during swap (default 50mm)
-- **change_x / change_y** — park position (default 110, 110 = bed center)
-
-**Go to Park** — moves to the configured park position now.
-
-**Save Current** — saves the current position as the new park position.
-
-## SVG Pipeline
-
-```
-SVG file
-  ↓ Parse (svgpathtools)
-  ↓ Flatten curves (64 segments each)
-  ↓ Simplify (Ramer-Douglas-Peucker, optional)
-  ↓ Fill generation (hatch/crosshatch, optional)
-  ↓ User transforms (scale → rotate → mirror → translate)
-  ↓ Optimize path (nearest-neighbor, optional)
-  ↓ Auto-scale & center to effective area
-  ↓ Apply pen offset + page offset
-  ↓ Generate G-code
-  ↓ Stream to printer
-```
-
-### Supported SVG Elements
-
-`<path>`, `<rect>` (with rounded corners), `<circle>`, `<ellipse>`, `<line>`, `<polyline>`, `<polygon>`
-
-### Fill Generation
-
-For closed shapes (first point ≈ last point), generates hatch or crosshatch fill lines at configurable spacing and angle. The algorithm rotates the polygon, runs scanline intersection, then rotates back.
-
-## Test Patterns
-
-Built-in patterns for calibration and testing — no SVG needed:
-
-| Pattern | Description |
-|---------|-------------|
-| Circle | 65-point circle |
-| Square | Rectangle with rounded corners |
-| Grid | 5×5 grid |
-| Star | 5-point star |
-| Spiral | 3-turn Archimedean spiral |
-| Crosshair | Cross lines with center circle |
-| Text | Hershey vector font, auto-wrapped |
-
-Select a tool, set size (default 80mm), and hit generate. Text pattern supports multi-line input with word wrapping and alignment (left/center/right).
-
-## API Reference
-
-### Serial
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/ports` | List available serial ports |
-| POST | `/api/serial/connect` | Connect to printer — `{port, baudrate}` |
-| POST | `/api/serial/disconnect` | Disconnect from printer |
-| GET | `/api/status` | Connection status + printer position |
-| POST | `/api/send-command` | Send raw G-code — `{command}` |
-
-### Upload & Convert
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/upload` | Upload SVG — returns preview polylines |
-| POST | `/api/convert` | Convert SVG to G-code with transforms |
-| POST | `/api/test-pattern` | Generate test pattern G-code |
-| GET | `/api/download/<file_id>` | Download generated G-code file |
-
-### Print Control
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/print` | Start plotting a G-code file |
-| POST | `/api/stop` | Emergency stop (M112) |
-
-### Jog & Motion
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/jog` | Jog axis — `{axis, distance, speed}` |
-| POST | `/api/home` | Home all axes |
-
-### Calibration
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/calibration/start` | Move to calibration position |
-| POST | `/api/calibration/pen-loaded` | Raise Z 5mm after pen loading |
-| GET | `/api/calibration` | Get saved calibration data |
-| POST | `/api/calibration/save` | Save Z heights — `{tool, pen_down_z, pen_up_z}` |
-| POST | `/api/calibration/offset` | Save pen XY offset — `{tool, offset_x, offset_y}` |
-| POST | `/api/calibration/step` | Jog Z for calibration — `{delta}` |
-| POST | `/api/calibration/test-dot` | Test pen contact (lower, dwell 1s, raise) |
-
-### Page
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/page-size` | Get saved page size |
-| POST | `/api/page-size` | Save page size — `{width, height, preset, offset_x, offset_y}` |
-| POST | `/api/mark-page` | Draw corner marks at page boundaries |
-
-### Bed Leveling
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/bed-level` | Control leveling — `{action: start/next/repeat/stop}` |
-
-### Tool Change
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/tool-change-park` | `{action: goto}` or `{action: save}` |
-
-### Settings
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/profiles` | List available tool profiles |
-| GET | `/api/settings/<tool_name>` | Get tool settings |
-| POST | `/api/settings/<tool_name>` | Save tool settings |
-
-### WebSocket
-
-| Endpoint | Description |
-|----------|-------------|
-| `WS /ws` | Real-time progress — `{"type":"progress", "completed":N, "total":T}` |
-
-## File Layout
+## Architecture
 
 ```
 plotter/
-├── app.py              Flask server + all API routes + WebSocket
-├── config.py           Settings models, defaults, profile loading
-├── gcode.py            SVG pipeline — parse → transform → G-code
-├── font.py             Hershey vector font (A-Z, a-z, 0-9, punctuation)
-├── serial_conn.py      PySerial wrapper — connect, stream, jog
-├── requirements.txt    flask, flask-sock, pyserial, svgpathtools, numpy, toml
-├── calibration.json    Per-tool Z heights + XY offsets (auto-generated)
-├── page_size.json      Saved page dimensions + offsets (auto-generated)
-├── serial_port.txt     Last used serial port (auto-generated)
-├── static/
-│   ├── index.html      Web UI
-│   └── app.js          Frontend logic
+├── app.py                  Flask server (~45 endpoints), WebSocket, ink streaming, OCR
+├── serial_conn.py          Thread-safe PySerial — streaming, live mode, jog, e-stop
+├── gcode.py                SVG pipeline — parse → transform → optimize → G-code
+├── config.py               Dataclass models, TOML profiles, calibration/page persistence
+├── font.py                 Hershey + Script Simplex cursive vector fonts
+├── calibration.json        Per-tool Z + XY offset overrides (gitignored)
+├── page_size.json          Saved page dimensions
+├── serial_port.txt         Cached serial port for auto-reconnect
 ├── profiles/
-│   ├── pencil.toml     Pencil profile
-│   ├── pen.toml        Pen profile
-│   └── watercolor.toml Watercolor profile
-└── output/             Generated SVG + G-code files
+│   ├── pencil.toml
+│   ├── pen.toml
+│   └── watercolor.toml
+├── static/
+│   ├── index.html          Single-page UI
+│   ├── style.css
+│   └── app/
+│       ├── state.js        Reactive pub/sub store
+│       ├── main.js         Entry point
+│       ├── api.js          Fetch wrapper
+│       ├── websocket.js    WS connection + progress
+│       ├── router.js       5-step navigation
+│       ├── steps/          Per-step panels (setup, create, prepare, plot, config)
+│       ├── creators/       Content generators (svg-upload, scriptorium, ink-drawing,
+│       │                    toon-tracer, test-patterns, handwriting-ocr, slate-controls)
+│       ├── components/     Reusable widgets (canvas-preview, status-bar, page-size)
+│       └── lib/            Utilities (toast, slider, drop-zone, escape)
+└── output/                 Generated SVG + G-code (auto-cleaned after 7 days)
 ```
+
+## Requirements
+
+- Python 3.10+
+- Marlin-compatible 3D printer (tested on Ender 3)
+- Serial connection (USB, 250000 baud)
+- For OCR: NVIDIA NIM API key, ZhipuAI key, or local Ollama with a vision model
+
+```
+flask
+flask-sock
+pyserial
+svgpathtools
+numpy
+scipy
+opencv-python
+svgwrite
+toml
+requests
+```
+
+## License
+
+MIT
