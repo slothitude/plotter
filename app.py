@@ -49,11 +49,32 @@ def _ensure_connected():
         try:
             serial.connect(port)
             time.sleep(1)
-            serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; safe height on connect")
+            _raise_to_safe()
             return True
         except Exception:
             return False
     return False
+def _raise_to_safe():
+    """Ensure Z is at SAFE_Z (30). Queries position first; homes if unknown.
+
+    SAFETY RULE: If X < 30, Z MUST be ≥ 30. The water cup is at X=0.
+    Only exception is the dip sequence (handled in gcode.py).
+    This function always raises to SAFE_Z, satisfying the rule for all callers.
+    """
+    if not serial.is_connected:
+        return None
+    pos = serial.get_position()
+    if not pos or "Z" not in pos:
+        serial.send_command("G28")
+        time.sleep(12)
+        pos = serial.get_position()
+        if not pos or "Z" not in pos:
+            return None
+    serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; raise to safe height")
+    time.sleep(1)
+    return pos
+
+
 uploaded_svgs: dict[str, str] = {}  # id -> file path
 generated_gcode: dict[str, str] = {}  # id -> gcode string
 text_polylines: dict[str, list] = {}  # id -> polylines (from text patterns, no SVG round-trip)
@@ -245,7 +266,7 @@ def serial_connect():
         serial.connect(port, baudrate)
         SERIAL_PORT_FILE.write_text(port)
         time.sleep(1)
-        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; safe height on connect")
+        _raise_to_safe()
         return jsonify({"ok": True, "port": port})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -303,6 +324,7 @@ def _get_transform_params(data: dict) -> dict:
         "user_translate_y": float(data.get("translate_y", 0.0)),
         "mirror_x": bool(data.get("mirror_x", False)),
         "mirror_y": bool(data.get("mirror_y", False)),
+        "no_fit": bool(data.get("no_fit", False)),
         "bed_x": float(data.get("page_width", config.PRINTER_BED_X)),
         "bed_y": float(data.get("page_height", config.PRINTER_BED_Y)),
         "page_offset_x": float(data.get("page_offset_x", 0)),
@@ -348,10 +370,23 @@ def convert_svg():
     transform_kwargs = _get_transform_params(data)
 
     try:
+        two_pass = False
+        id_pass2 = None
         if file_id in uploaded_svgs:
             gc, polylines, toolpath, stats, meta = gcode.svg_to_gcode(
                 uploaded_svgs[file_id], tool_name, **transform_kwargs
             )
+            # Two-pass watercolor: store separate G-code entries
+            if meta.get("two_pass"):
+                two_pass = True
+                pass2_gc = meta["pass2_gcode"]
+                id_pass2 = f"{file_id}_pass2"
+                generated_gcode[id_pass2] = pass2_gc
+                gc = meta["pass1_gcode"]  # primary is now pass1
+                # Also save pass2 G-code file
+                gcode_path_p2 = config.OUTPUT_DIR / f"{id_pass2}.gcode"
+                with open(gcode_path_p2, "w") as f:
+                    f.write(pass2_gc)
         else:
             # Direct polyline conversion (text patterns — no SVG round-trip)
             raw_polylines = text_polylines[file_id]
@@ -418,7 +453,7 @@ def convert_svg():
             preview.append([(round(p[0], 2), round(p[1], 2)) for p in pl.points])
 
         line_count = len([l for l in gc.splitlines() if l.strip() and not l.strip().startswith(";")])
-        return jsonify({
+        resp = {
             "id": file_id,
             "gcode_preview": gc[:2000],
             "gcode_file": f"/api/download/{file_id}",
@@ -436,7 +471,11 @@ def convert_svg():
                 "estimated_time_s": stats.estimated_time_s,
                 "bounds": stats.bounds,
             },
-        })
+        }
+        if two_pass:
+            resp["two_pass"] = True
+            resp["id_pass2"] = id_pass2
+        return jsonify(resp)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1442,6 +1481,22 @@ def ink_ocr():
 
 # ── Print ────────────────────────────────────────────────────────────
 
+@app.route("/api/print-raw", methods=["POST"])
+def print_raw():
+    """Send raw G-code string directly to the printer."""
+    data = request.json or {}
+    raw = data.get("gcode", "")
+    if not raw:
+        return jsonify({"error": "gcode required"}), 400
+    if not _ensure_connected():
+        return jsonify({"error": "Printer not connected"}), 400
+    try:
+        serial.send_gcode_file(raw, filename="raw", progress_callback=_broadcast_progress)
+        return jsonify({"ok": True, "message": "Printing raw G-code"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/print", methods=["POST"])
 def start_print():
     data = request.json or {}
@@ -1490,6 +1545,16 @@ def jog():
             if current_z < config.SAFE_Z:
                 serial.send_command(f"G90 ; Absolute positioning")
                 serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F1500 ; Raise to safe travel height")
+        elif axis == "Z":
+            pos = serial.get_position()
+            current_z = float(pos.get("Z", 0))
+            current_x = float(pos.get("X", 0))
+            target_z = current_z + distance
+            if target_z < 0:
+                return jsonify({"error": "Z would go below 0"}), 400
+            # Cup at X=0 — if X < 30, Z must stay at SAFE_Z or above
+            if current_x < 30 and target_z < config.SAFE_Z:
+                return jsonify({"error": f"Z must stay ≥ {config.SAFE_Z} when X < 30 (cup clearance)"}), 400
         serial.send_command(f"G91 ; Relative positioning")
         serial.send_command(f"G1 {axis}{distance:.3f} F{speed}")
         serial.send_command(f"G90 ; Absolute positioning")
@@ -1505,15 +1570,15 @@ def home():
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     try:
-        serial.send_command("G1 Z30.000 F3000")                       # lift to safe height
+        _raise_to_safe()
         time.sleep(1.5)
         serial.send_command("G28")                                    # home to establish position
         time.sleep(12)                                                # wait for homing to complete
-        serial.send_command("G1 Z30.000 F3000")                       # raise to safe height
+        _raise_to_safe()
         time.sleep(1.5)
         serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to origin
         time.sleep(3)
-        serial.send_command("G1 Z30.000 F300")                        # park at Z30
+        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F300")         # park at safe Z
         time.sleep(1.5)
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
@@ -1529,9 +1594,12 @@ def calibration_start():
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     try:
+        _raise_to_safe()
+        time.sleep(1.5)
         serial.send_command("G28 ; Home all axes")
-        serial.send_command("G90 ; Absolute positioning")
-        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; Raise Z first")
+        time.sleep(12)
+        _raise_to_safe()
+        time.sleep(1)
         serial.send_command("G1 X110.000 Y110.000 F3000 ; Move to center")
         serial.send_command("G1 Z20.000 F500 ; Lower to pen-load height")
         pos = serial.get_position()
@@ -1576,6 +1644,7 @@ def save_calibration_endpoint():
     config.save_calibration(tool, pen_down_z, pen_up_z,
                             existing.get("offset_x", 0.0),
                             existing.get("offset_y", 0.0))
+    _raise_to_safe()
     return jsonify({"ok": True, "tool": tool, "pen_down_z": pen_down_z, "pen_up_z": pen_up_z})
 
 
@@ -1687,9 +1756,9 @@ def mark_page():
     arm = 10.0  # mm mark length
 
     try:
+        _raise_to_safe()
+        time.sleep(0.5)
         serial.send_command(f"G90 ; Absolute positioning")
-        serial.send_command(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe Z")
-        time.sleep(1)
 
         for i, (bx, by) in enumerate(corners_bed):
             # Convert bed coords to hotend coords (same as gcode.py transform)
