@@ -469,9 +469,10 @@ def test_pattern():
         scale = font_size / _font.CHAR_HEIGHT  # char height in mm
         char_h_mm = _font.CHAR_HEIGHT * scale
 
-        # Cursive needs wider inter-character spacing than hershey
+        # Cursive needs wider spacing than hershey
         if font_style == "cursive":
             char_spacing = scale * 1.3
+            line_spacing_factor = max(line_spacing_factor, 2.0)
         else:
             char_spacing = scale * 1.0
 
