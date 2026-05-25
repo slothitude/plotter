@@ -34,8 +34,9 @@ Single HTML/JS/CSS — no framework, no bundler. Modular structure:
 - `api.js` — Fetch wrapper, `websocket.js` — WS connection + progress
 - `router.js` — 5-step navigation (Setup → Create → Prepare → Plot → Config)
 - `steps/` — Per-step panel logic (setup, create, prepare, plot, config)
-- `creators/` — Content generators (svg-upload, test-patterns, scriptorium, ink-drawing, toon-tracer, handwriting-ocr)
+- `creators/` — Content generators (svg-upload, test-patterns, scriptorium, ink-drawing, toon-tracer, handwriting-ocr, slate-controls)
 - `components/` — Reusable widgets (canvas-preview, status-bar, page-size)
+- `log-drawer.js` — G-code command log panel
 - `lib/` — Utilities (toast, slider, drop-zone, escape)
 
 ### Data Flow: SVG → Plot
@@ -107,11 +108,13 @@ When enabled: Pass 1 draws with pencil (guide layer), M0 pause for tool swap, Pa
 
 ## Key Gotchas
 
+- Flask **must run with `debug=False, use_reloader=False`** — the watchdog reloader fork locks the COM port (PermissionError on reconnect)
 - Global `serial` object in app.py is the single SerialConnection instance
-- `uploaded_svgs` dict is in-memory only — lost on restart
+- Two in-memory stores: `uploaded_svgs` (id→filepath) and `text_polylines` (id→polylines) — both lost on restart
 - `serial_port.txt` caches last-used port for auto-reconnect
-- `config.SAFE_Z` (20mm) is the minimum travel height — all pen-up moves use this or higher
+- `config.SAFE_Z` is **30mm** — all travel/pen-up moves use this or higher; connect and home both raise to SAFE_Z
+- G28 doesn't wait for motion to complete — Marlin sends "ok" before homing finishes. Wait 10-15s after G28 before sending movement commands
 - The `_stroke_ended` flag must be sent even with empty points, otherwise strokes merge
 - `calibration.json` OVERRIDES TOML profile values — always edit calibration.json for offset/Z changes
-- `output/` directory is cleaned on startup via `_cleanup_output()` — don't store persistent files there
+- `output/` directory is cleaned of files older than 7 days on startup — don't store persistent files there
 - Cursive Y coordinates can be negative (descenders) up to ~20 (ascenders) — wider range than standard Hershey
