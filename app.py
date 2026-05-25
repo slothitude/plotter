@@ -1809,5 +1809,8 @@ def shutdown():
 
 if __name__ == "__main__":
     _cleanup_output()
-    print("Pen Plotter — http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
+    if _ensure_connected():
+        print(f"Pen Plotter — http://localhost:5000  (auto-connected)")
+    else:
+        print("Pen Plotter — http://localhost:5000  (no printer detected)")
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True, use_reloader=False)

@@ -22,6 +22,7 @@ class SerialConnection:
         self._completed_commands = 0
         self._stop_requested = False
         self._current_file: Optional[str] = None
+        self._last_port: Optional[str] = None
         self._position = {}
         # Live plot mode
         self._stroke_queue: deque[str] = deque()
@@ -41,7 +42,8 @@ class SerialConnection:
         if self._serial and self._serial.is_open:
             self.disconnect()
         try:
-            self._serial = serial.Serial(port, baudrate, timeout=1)
+            self._serial = serial.Serial(port, baudrate, timeout=1, write_timeout=5)
+            self._last_port = port
             time.sleep(5)
             self._drain()
             return True
@@ -172,17 +174,22 @@ class SerialConnection:
                         self._serial.flush()
                         # Wait for "ok" acknowledgment from firmware
                         deadline = time.time() + 10
+                        got_ok = False
                         while time.time() < deadline:
                             line = self._serial.readline()
                             if not line:
                                 continue
                             decoded = line.decode(errors="ignore").strip()
                             if "ok" in decoded.lower():
+                                got_ok = True
                                 break
                             # Parse position if firmware sends it
                             if decoded.startswith("X:"):
                                 self._parse_position(decoded)
-                except Exception:
+                        if not got_ok:
+                            print(f"  ACK TIMEOUT after cmd: {cmd[:60]}", flush=True)
+                except Exception as _e:
+                    print(f"  SERIAL ERROR in _send_loop: {_e}", flush=True)
                     break
                 self._completed_commands += 1
                 if self._progress_callback:
@@ -193,14 +200,17 @@ class SerialConnection:
         finally:
             self._sending = False
             # Park after plot finishes or is stopped
-            if self._serial and self._serial.is_open and not self._stop_requested:
+            if not self._stop_requested:
                 try:
+                    if not self._serial or not self._serial.is_open:
+                        print("  Serial lost — attempting reconnect for park...", flush=True)
+                        self.connect(self._last_port)
                     self._send_direct("G90")
                     self._send_direct(f"G1 Z{20:.3f} F3000")
                     self._send_direct("G0 X0.000 Y0.000 F3000")
                     self._send_direct("M84")
-                except Exception:
-                    pass
+                except Exception as _e:
+                    print(f"  Park failed: {_e}", flush=True)
 
     def stop(self):
         self._stop_requested = True
