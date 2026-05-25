@@ -486,17 +486,25 @@ def text_to_cursive(text: str, x: float = 0, y: float = 0,
 
 
 def measure_text(text: str, scale: float = 3.0, spacing: float = 1.5,
-                 line_spacing: float = 1.5) -> tuple[float, float]:
-    """Measure the width and height of text without rendering it.
+                 line_spacing: float = 1.5, font_style: str = "hershey") -> tuple[float, float]:
+    """Measure the width and height of rendered text.
+
+    Uses actual character widths from the font data for accuracy.
+    Cursive uses CURSIVE_WIDTH, Hershey uses CHAR_WIDTH.
 
     Returns:
         (width, height) tuple in scaled units
     """
     lines = text.split('\n')
     max_width = 0
+    char_w = CHAR_WIDTH
+    if font_style == "cursive":
+        # Use average cursive width as estimate (individual chars vary)
+        all_widths = list(CURSIVE_WIDTHS.values())
+        char_w = sum(all_widths) / len(all_widths) if all_widths else CHAR_WIDTH
     for line in lines:
         if line:
-            w = len(line) * (CHAR_WIDTH * scale + spacing) - spacing
+            w = len(line) * (char_w * scale + spacing) - spacing
         else:
             w = 0
         max_width = max(max_width, w)
