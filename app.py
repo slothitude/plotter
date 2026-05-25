@@ -96,6 +96,74 @@ def _stroke_to_gcode(points_mm, profile):
     return lines
 
 
+def _generate_illustration(x, y, w, h):
+    """Generate pen-plotter-friendly vector illustration (house, tree, sun).
+
+    All coords are absolute, scaled to fit within (x, y, w, h).
+    Returns list of polylines (each a list of (x, y) tuples).
+    """
+    strokes = []
+
+    # House — centered in left portion of box
+    hx = x + w * 0.05
+    hy = y + h * 0.35
+    hw = w * 0.45
+    hh = h * 0.50
+    # Walls
+    strokes.append([(hx, hy + hh), (hx, hy), (hx + hw, hy), (hx + hw, hy + hh)])
+    # Roof
+    strokes.append([(hx - w * 0.03, hy), (hx + hw / 2, hy - h * 0.18), (hx + hw + w * 0.03, hy)])
+    # Door
+    dw, dh = hw * 0.22, hh * 0.45
+    dx = hx + hw / 2 - dw / 2
+    dy = hy + hh - dh
+    strokes.append([(dx, dy), (dx, dy + dh), (dx + dw, dy + dh), (dx + dw, dy)])
+    # Window
+    ww, wh = hw * 0.2, hh * 0.2
+    wx = hx + hw * 0.12
+    wy = hy + hh * 0.2
+    strokes.append([(wx, wy), (wx + ww, wy), (wx + ww, wy + wh), (wx, wy + wh), (wx, wy)])
+
+    # Tree — right side
+    tx = x + w * 0.72
+    tw = w * 0.12
+    # Trunk
+    t_base = y + h * 0.85
+    t_top = y + h * 0.50
+    strokes.append([(tx, t_base), (tx, t_top), (tx + tw, t_top), (tx + tw, t_base)])
+    # Foliage (stacked triangles)
+    cx = tx + tw / 2
+    strokes.append([
+        (cx - w * 0.14, t_top + h * 0.02),
+        (cx, t_top - h * 0.20),
+        (cx + w * 0.14, t_top + h * 0.02),
+    ])
+    strokes.append([
+        (cx - w * 0.10, t_top - h * 0.08),
+        (cx, t_top - h * 0.30),
+        (cx + w * 0.10, t_top - h * 0.08),
+    ])
+
+    # Sun — top right
+    sx, sy = x + w * 0.82, y + h * 0.12
+    sr = min(w, h) * 0.08
+    # Circle (16-segment approximation)
+    pts = []
+    for i in range(17):
+        a = 2 * math.pi * i / 16
+        pts.append((sx + sr * math.cos(a), sy + sr * math.sin(a)))
+    strokes.append(pts)
+    # Rays
+    for i in range(8):
+        a = 2 * math.pi * i / 8
+        strokes.append([
+            (sx + sr * 1.3 * math.cos(a), sy + sr * 1.3 * math.sin(a)),
+            (sx + sr * 1.8 * math.cos(a), sy + sr * 1.8 * math.sin(a)),
+        ])
+
+    return strokes
+
+
 # ── WebSocket ────────────────────────────────────────────────────────
 
 def _broadcast_progress(completed, total, info):
@@ -460,6 +528,46 @@ def test_pattern():
         cpts = " ".join(f"{cx + cr * math.cos(2*math.pi*i/32)},{cy + cr * math.sin(2*math.pi*i/32)}" for i in range(33))
         svg_parts.append(f'<polyline points="{cpts}" fill="none" stroke="black"/>')
 
+    elif pattern == "border":
+        page_w = float(data.get("page_width", 180))
+        page_h = float(data.get("page_height", 175))
+        margin = float(data.get("border_margin", 5))
+        inset = float(data.get("border_inset", 10))
+        # SVG viewBox mapped to page mm
+        svg_parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {page_w} {page_h}">']
+        # Outer box
+        svg_parts.append(f'<rect x="{margin}" y="{margin}" width="{page_w - 2*margin}" height="{page_h - 2*margin}" fill="none" stroke="black"/>')
+        # Inner box
+        m2 = margin + inset
+        svg_parts.append(f'<rect x="{m2}" y="{m2}" width="{page_w - 2*m2}" height="{page_h - 2*m2}" fill="none" stroke="black"/>')
+        # Corner diagonals
+        svg_parts.append(f'<line x1="{margin}" y1="{margin}" x2="{m2}" y2="{m2}" stroke="black"/>')
+        svg_parts.append(f'<line x1="{page_w - margin}" y1="{margin}" x2="{page_w - m2}" y2="{m2}" stroke="black"/>')
+        svg_parts.append(f'<line x1="{page_w - margin}" y1="{page_h - margin}" x2="{page_w - m2}" y2="{page_h - m2}" stroke="black"/>')
+        svg_parts.append(f'<line x1="{margin}" y1="{page_h - margin}" x2="{m2}" y2="{page_h - m2}" stroke="black"/>')
+        # Edge tick marks (3 per edge)
+        for i in range(1, 4):
+            frac = i / 4.0
+            x = margin + frac * (page_w - 2 * margin)
+            svg_parts.append(f'<line x1="{x}" y1="{margin}" x2="{x}" y2="{m2}" stroke="black"/>')
+            svg_parts.append(f'<line x1="{x}" y1="{page_h - margin}" x2="{x}" y2="{page_h - m2}" stroke="black"/>')
+            y = margin + frac * (page_h - 2 * margin)
+            svg_parts.append(f'<line x1="{margin}" y1="{y}" x2="{m2}" y2="{y}" stroke="black"/>')
+            svg_parts.append(f'<line x1="{page_w - margin}" y1="{y}" x2="{page_w - m2}" y2="{y}" stroke="black"/>')
+        svg_parts.append('</svg>')
+        svg_content = "\n".join(svg_parts)
+        svg_id = str(uuid.uuid4())
+        svg_path = f"output/{svg_id}.svg"
+        with open(svg_path, "w") as f:
+            f.write(svg_content)
+        uploaded_svgs[svg_id] = svg_path
+        polylines = gcode.parse_svg(svg_path)
+        return jsonify({
+            "id": svg_id,
+            "polylines": polylines,
+            "stroke_count": len(polylines),
+        })
+
     elif pattern == "text":
         text = data.get("text", "HELLO")
         if len(text) > 5000:
@@ -488,64 +596,125 @@ def test_pattern():
         usable_w = bed_x - 2 * margin
         usable_h = bed_y - 2 * margin
 
-        # ── Word-wrap: split text into lines that fit in usable_w ──
-        def _measure_word(word, _scale, _spacing):
-            """Measure rendered width of a single word in mm."""
-            strokes = _font.text_to_strokes(word, x=0, y=0, scale=_scale, spacing=_spacing)
+        # ── Picture zone (optional inline illustration) ──
+        has_picture = all(k in data for k in ("picture_x", "picture_y", "picture_w", "picture_h"))
+        if has_picture:
+            pic_x = float(data["picture_x"])
+            pic_y = float(data["picture_y"])
+            pic_w = float(data["picture_w"])
+            pic_h = float(data["picture_h"])
+            pic_side = data.get("picture_side", "right")
+            pic_gap = 5.0  # mm gap between text and picture
+        else:
+            pic_x = pic_y = pic_w = pic_h = 0
+            pic_side = "right"
+            pic_gap = 0
+
+        def _line_bounds(y_cur):
+            """Return (x_start, available_width) for a text line at y_cur."""
+            if not has_picture:
+                return (margin, usable_w)
+            line_bottom = y_cur + char_h_mm
+            pic_top = pic_y
+            pic_bottom = pic_y + pic_h
+            # Check if this line overlaps the picture zone vertically
+            if line_bottom > pic_top and y_cur < pic_bottom:
+                if pic_side == "right":
+                    return (margin, pic_x - margin - pic_gap)
+                else:
+                    x_start = pic_x + pic_w + pic_gap
+                    return (x_start, bed_x - margin - x_start)
+            return (margin, usable_w)
+
+        # ── Word-wrap with picture zone awareness ──
+        _render_fn = _font.text_to_cursive if font_style == "cursive" else _font.text_to_strokes
+
+        def _measure_line(line_str):
+            """Render a candidate line at origin and return its actual bounding-box width."""
+            strokes = _render_fn(line_str, x=0, y=0, scale=scale, spacing=char_spacing)
             if not strokes:
                 return 0.0
             xs = [p[0] for s in strokes for p in s]
             return (max(xs) - min(xs)) if xs else 0.0
 
-        def _word_width(word):
-            return _measure_word(word, scale, char_spacing)
-
-        space_w = _word_width("i") * 0.8   # approximate space width
+        def _advance_past_picture(y, avail_w):
+            """Skip ahead past the narrow picture zone if a word doesn't fit."""
+            while avail_w < usable_w and y + line_height < bed_y - margin:
+                y += line_height
+                _, avail_w = _line_bounds(y)
+            return y, avail_w
 
         raw_paragraphs = text.split("\n")
-        lines = []  # list of line strings
+        layout_lines = []  # list of (text, x_start, avail_w) tuples
+        y_wrap = margin    # track Y cursor through wrapping pass
+
         for para in raw_paragraphs:
             if para.strip() == "":
-                lines.append("")   # blank line → paragraph break
+                layout_lines.append(("", margin, usable_w))
+                y_wrap += line_height * 0.6
                 continue
             words = para.split()
             if not words:
-                lines.append("")
+                layout_lines.append(("", margin, usable_w))
+                y_wrap += line_height * 0.6
                 continue
-            current = words[0]
-            current_w = _word_width(words[0])
-            for word in words[1:]:
-                ww = _word_width(word)
-                if current_w + space_w + ww <= usable_w:
-                    current += " " + word
-                    current_w += space_w + ww
-                else:
-                    lines.append(current)
-                    current = word
-                    current_w = ww
-            lines.append(current)
 
-        # ── Render each line at its correct Y offset ──
+            # Greedy wrap using whole-line measurement
+            x_start, avail_w = _line_bounds(y_wrap)
+            current_words = [words[0]]
+            # If first word exceeds narrow width, skip ahead to full-width line
+            if _measure_line(words[0]) > avail_w:
+                y_wrap, avail_w = _advance_past_picture(y_wrap, avail_w)
+                x_start, _ = _line_bounds(y_wrap)
+            for word in words[1:]:
+                candidate = " ".join(current_words + [word])
+                if _measure_line(candidate) <= avail_w:
+                    current_words.append(word)
+                else:
+                    layout_lines.append((" ".join(current_words), x_start, avail_w))
+                    y_wrap += line_height
+                    x_start, avail_w = _line_bounds(y_wrap)
+                    current_words = [word]
+                    # Oversized word — skip to full-width line
+                    if _measure_line(word) > avail_w:
+                        y_wrap, avail_w = _advance_past_picture(y_wrap, avail_w)
+                        x_start, _ = _line_bounds(y_wrap)
+            layout_lines.append((" ".join(current_words), x_start, avail_w))
+            y_wrap += line_height
+
+        # ── Render each layout line at its (x_start, y_cursor) ──
         all_strokes = []
         y_cursor = margin   # start at top margin (Y-down screen coords; flipped later)
+        rendered_count = 0
 
-        for line_text in lines:
+        for line_text, x_start, avail_w in layout_lines:
             if y_cursor + char_h_mm > bed_y - margin:
-                break   # out of vertical space — stop rather than overflow
+                break   # out of vertical space
             if line_text.strip() == "":
-                y_cursor += line_height * 0.6   # smaller gap for blank paragraph break
+                y_cursor += line_height * 0.6   # paragraph break
                 continue
 
             if font_style == "cursive":
                 line_strokes = _font.text_to_cursive(
-                    line_text, x=margin, y=y_cursor, scale=scale, spacing=char_spacing
+                    line_text, x=x_start, y=y_cursor, scale=scale, spacing=char_spacing
                 )
             else:
                 line_strokes = _font.text_to_strokes(
-                    line_text, x=margin, y=y_cursor, scale=scale, spacing=char_spacing
+                    line_text, x=x_start, y=y_cursor, scale=scale, spacing=char_spacing
                 )
             all_strokes.extend(line_strokes)
             y_cursor += line_height
+            rendered_count += 1
+
+        # ── Append illustration strokes if picture zone defined ──
+        if has_picture:
+            all_strokes.extend(_generate_illustration(pic_x, pic_y, pic_w, pic_h))
+            # Thin border around picture zone
+            all_strokes.append([
+                (pic_x, pic_y), (pic_x + pic_w, pic_y),
+                (pic_x + pic_w, pic_y + pic_h), (pic_x, pic_y + pic_h),
+                (pic_x, pic_y),
+            ])
 
         if not all_strokes:
             return jsonify({"error": "No strokes generated"}), 400
@@ -563,7 +732,7 @@ def test_pattern():
             "id": file_id,
             "polylines": preview,
             "stroke_count": len(polylines),
-            "line_count_rendered": len([l for l in lines if l.strip()]),
+            "line_count_rendered": rendered_count,
         })
 
     svg_parts.append('</svg>')
@@ -1333,10 +1502,15 @@ def home():
         return jsonify({"error": "Printer not connected"}), 400
     try:
         serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # lift Z first
+        time.sleep(1.5)
         serial.send_command("G28")                                    # home to establish position
+        time.sleep(12)                                                # wait for homing to complete
         serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")        # raise to safe
+        time.sleep(1.5)
         serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to water cup
+        time.sleep(3)
         serial.send_command("G1 Z0.000 F300")                         # lower to rest
+        time.sleep(1.5)
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
