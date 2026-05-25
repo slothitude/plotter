@@ -106,8 +106,8 @@ class SerialConnection:
             return True
         return False
 
-    def send_command(self, cmd: str, wait: bool = True) -> str:
-        """Send G-code. Fire and forget — no waiting for ok."""
+    def send_command(self, cmd: str) -> str:
+        """Send a raw G-code command (fire and forget, no ack wait)."""
         if not self.is_connected:
             raise ConnectionError("Not connected to printer")
         with self._lock:
