@@ -203,9 +203,18 @@ def _parse_svg_basic_shapes(svg_path: str) -> list[Polyline]:
 
 def parse_svg(svg_path: str) -> list[Polyline]:
     """Parse an SVG file into polylines (paths + basic shapes)."""
-    path_polylines = _parse_svg_paths(svg_path)
-    shape_polylines = _parse_svg_basic_shapes(svg_path)
-    return path_polylines + shape_polylines
+    polylines = []
+    try:
+        polylines.extend(_parse_svg_paths(svg_path))
+    except Exception as e:
+        print(f"  SVG path parse warning: {e}", flush=True)
+    try:
+        polylines.extend(_parse_svg_basic_shapes(svg_path))
+    except Exception as e:
+        print(f"  SVG shape parse warning: {e}", flush=True)
+    if not polylines:
+        raise ValueError(f"SVG file contains no drawable elements: {svg_path}")
+    return polylines
 
 
 # ── Path Optimization ───────────────────────────────────────────────
