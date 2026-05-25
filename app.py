@@ -53,6 +53,7 @@ def _ensure_connected():
     return False
 uploaded_svgs: dict[str, str] = {}  # id -> file path
 generated_gcode: dict[str, str] = {}  # id -> gcode string
+text_polylines: dict[str, list] = {}  # id -> polylines (from text patterns, no SVG round-trip)
 ws_clients: list = []
 
 # Ink / Slate state
@@ -261,15 +262,69 @@ def convert_svg():
     file_id = data.get("id")
     tool_name = data.get("tool", "pencil")
 
-    if file_id not in uploaded_svgs:
+    if file_id not in uploaded_svgs and file_id not in text_polylines:
         return jsonify({"error": "SVG not found — upload first"}), 404
 
     transform_kwargs = _get_transform_params(data)
 
     try:
-        gc, polylines, toolpath, stats, meta = gcode.svg_to_gcode(
-            uploaded_svgs[file_id], tool_name, **transform_kwargs
-        )
+        if file_id in uploaded_svgs:
+            gc, polylines, toolpath, stats, meta = gcode.svg_to_gcode(
+                uploaded_svgs[file_id], tool_name, **transform_kwargs
+            )
+        else:
+            # Direct polyline conversion (text patterns — no SVG round-trip)
+            raw_polylines = text_polylines[file_id]
+            profile = config.load_profile(tool_name)
+
+            # Safety: refuse if tool not calibrated
+            if profile.height.pen_down_z == 0.0:
+                raise ValueError(
+                    f"Tool '{tool_name}' is not calibrated (pen_down_z=0). "
+                    "Run calibration first."
+                )
+
+            # Flip Y for correct text orientation on physical print.
+            # Text is pre-positioned in page-space (Y-down, origin top-left).
+            # Printer bed is Y-up, so we reflect: y_bed = bed_y - y_screen.
+            bed_y = transform_kwargs.get("bed_y", config.PRINTER_BED_Y)
+            flipped = [gcode.Polyline(points=[(x, bed_y - y) for x, y in pl.points],
+                                       layer=pl.layer)
+                       for pl in raw_polylines]
+
+            # Text polylines: force simplification to reduce micro-moves.
+            # Text is already in final page-space — disable auto-centering/scaling
+            # so the layout we computed is preserved exactly.
+            # Negate rotation to compensate for Y-flip (Y-flip reverses rotation direction).
+            transform_kwargs = {
+                **transform_kwargs,
+                "simplify": True,
+                "simplify_tolerance": 0.3,
+                "user_rotate": -transform_kwargs.get("user_rotate", 0.0),
+                "user_scale": transform_kwargs.get("user_scale", 1.0),
+            }
+
+            gc, toolpath, meta = gcode.polylines_to_gcode(
+                flipped, profile, **transform_kwargs
+            )
+            # Extract stats from toolpath
+            travel_segs = []
+            for seg in toolpath:
+                if seg["type"] == "travel" and len(seg["points"]) >= 2:
+                    travel_segs.append((tuple(seg["points"][0]), tuple(seg["points"][-1])))
+            preview_polylines = []
+            for seg in toolpath:
+                if seg["type"] == "draw" and len(seg["points"]) >= 2:
+                    preview_polylines.append(gcode.Polyline(
+                        points=[tuple(p) for p in seg["points"]],
+                        layer=seg.get("layer", 0),
+                    ))
+            stats = gcode.compute_stats(
+                preview_polylines, travel_segs,
+                profile.movement.draw_speed, profile.movement.travel_speed,
+            )
+            polylines = preview_polylines
+
         generated_gcode[file_id] = gc
 
         # Save G-code file
@@ -399,67 +454,107 @@ def test_pattern():
 
     elif pattern == "text":
         text = data.get("text", "HELLO")
+        if len(text) > 5000:
+            return jsonify({"error": "Text too long (max 5000 characters)"}), 400
         font_style = data.get("font", "hershey")
-        page_width = float(data.get("page_width", config.PRINTER_BED_X))
-        page_height = float(data.get("page_height", config.PRINTER_BED_Y))
-        page_offset_x = float(data.get("page_offset_x", 0))
-        page_offset_y = float(data.get("page_offset_y", 0))
         font_size = float(data.get("font_size", 25))
         import font as _font
+
+        # Page/bed dimensions for layout
+        bed_x = float(data.get("page_width", config.PRINTER_BED_X))
+        bed_y = float(data.get("page_height", config.PRINTER_BED_Y))
+        margin = float(data.get("text_margin", 10.0))   # mm margin around page
+        line_spacing_factor = float(data.get("line_spacing", 1.4))  # multiplier on char height
+
         scale = font_size / _font.CHAR_HEIGHT  # char height in mm
-        spacing = scale * 1.0
-        # Render text at (0,0) — gcode.py handles centering, pen offset, and Z
+        char_h_mm = _font.CHAR_HEIGHT * scale
+
+        # Cursive needs wider inter-character spacing than hershey
         if font_style == "cursive":
-            strokes = _font.text_to_cursive(text, x=0, y=0, scale=scale, spacing=spacing)
+            char_spacing = scale * 1.3
         else:
-            strokes = _font.text_to_strokes(text, x=0, y=0, scale=scale, spacing=spacing)
+            char_spacing = scale * 1.0
 
-        polylines = [gcode.Polyline(points=s) for s in strokes if len(s) >= 2]
+        line_height = char_h_mm * line_spacing_factor
+        usable_w = bed_x - 2 * margin
+        usable_h = bed_y - 2 * margin
 
-        tool = data.get("tool", "pencil")
-        transform_kwargs = _get_transform_params(data)
-        profile = config.load_profile(tool)
-        gc, toolpath_data, meta = gcode.polylines_to_gcode(polylines, profile, **transform_kwargs)
+        # ── Word-wrap: split text into lines that fit in usable_w ──
+        def _measure_word(word, _scale, _spacing):
+            """Measure rendered width of a single word in mm."""
+            strokes = _font.text_to_strokes(word, x=0, y=0, scale=_scale, spacing=_spacing)
+            if not strokes:
+                return 0.0
+            xs = [p[0] for s in strokes for p in s]
+            return (max(xs) - min(xs)) if xs else 0.0
 
-        # Compute stats
-        travel_segs = []
-        for seg in toolpath_data:
-            if seg["type"] == "travel" and len(seg["points"]) >= 2:
-                travel_segs.append((tuple(seg["points"][0]), tuple(seg["points"][-1])))
-        preview_polylines = []
-        for seg in toolpath_data:
-            if seg["type"] == "draw" and len(seg["points"]) >= 2:
-                preview_polylines.append(gcode.Polyline(points=[tuple(p) for p in seg["points"]]))
-        stats = gcode.compute_stats(preview_polylines, travel_segs, profile.movement.draw_speed, profile.movement.travel_speed)
+        def _word_width(word):
+            return _measure_word(word, scale, char_spacing)
 
-        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in preview_polylines]
+        space_w = _word_width("i") * 0.8   # approximate space width
+
+        raw_paragraphs = text.split("\n")
+        lines = []  # list of line strings
+        for para in raw_paragraphs:
+            if para.strip() == "":
+                lines.append("")   # blank line → paragraph break
+                continue
+            words = para.split()
+            if not words:
+                lines.append("")
+                continue
+            current = words[0]
+            current_w = _word_width(words[0])
+            for word in words[1:]:
+                ww = _word_width(word)
+                if current_w + space_w + ww <= usable_w:
+                    current += " " + word
+                    current_w += space_w + ww
+                else:
+                    lines.append(current)
+                    current = word
+                    current_w = ww
+            lines.append(current)
+
+        # ── Render each line at its correct Y offset ──
+        all_strokes = []
+        y_cursor = margin   # start at top margin (Y-down screen coords; flipped later)
+
+        for line_text in lines:
+            if y_cursor + char_h_mm > bed_y - margin:
+                break   # out of vertical space — stop rather than overflow
+            if line_text.strip() == "":
+                y_cursor += line_height * 0.6   # smaller gap for blank paragraph break
+                continue
+
+            if font_style == "cursive":
+                line_strokes = _font.text_to_cursive(
+                    line_text, x=margin, y=y_cursor, scale=scale, spacing=char_spacing
+                )
+            else:
+                line_strokes = _font.text_to_strokes(
+                    line_text, x=margin, y=y_cursor, scale=scale, spacing=char_spacing
+                )
+            all_strokes.extend(line_strokes)
+            y_cursor += line_height
+
+        if not all_strokes:
+            return jsonify({"error": "No strokes generated"}), 400
+
+        polylines = [gcode.Polyline(points=s) for s in all_strokes if len(s) >= 2]
+
+        if not polylines:
+            return jsonify({"error": "No strokes generated"}), 400
 
         file_id = uuid.uuid4().hex[:8]
-        generated_gcode[file_id] = gc
-        gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
-        with open(gcode_path, "w") as f:
-            f.write(gc)
-        line_count = len([l for l in gc.splitlines() if l.strip() and not l.strip().startswith(";")])
+        text_polylines[file_id] = polylines
+
+        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
         return jsonify({
             "id": file_id,
             "polylines": preview,
-            "stroke_count": len(preview_polylines),
-            "has_gcode": True,
-            "gcode_preview": gc[:2000],
-            "gcode_file": f"/api/download/{file_id}",
-            "line_count": line_count,
-            "toolpath": toolpath_data,
-            "pen_offset_x": profile.height.offset_x,
-            "pen_offset_y": profile.height.offset_y,
-            "effective_area": meta.get("effective_area"),
-            "stats": {
-                "stroke_count": stats.stroke_count,
-                "point_count": stats.point_count,
-                "draw_distance_mm": stats.draw_distance_mm,
-                "travel_distance_mm": stats.travel_distance_mm,
-                "estimated_time_s": stats.estimated_time_s,
-                "bounds": stats.bounds,
-            },
+            "stroke_count": len(polylines),
+            "line_count_rendered": len([l for l in lines if l.strip()]),
         })
 
     svg_parts.append('</svg>')
@@ -1282,7 +1377,12 @@ def save_calibration_endpoint():
     if not tool:
         return jsonify({"error": "tool required"}), 400
 
-    config.save_calibration(tool, pen_down_z, pen_up_z)
+    # Preserve existing offsets when saving Z calibration
+    cal = config.load_calibration()
+    existing = cal.get(tool, {})
+    config.save_calibration(tool, pen_down_z, pen_up_z,
+                            existing.get("offset_x", 0.0),
+                            existing.get("offset_y", 0.0))
     return jsonify({"ok": True, "tool": tool, "pen_down_z": pen_down_z, "pen_up_z": pen_up_z})
 
 
