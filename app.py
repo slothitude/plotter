@@ -1674,6 +1674,7 @@ def jog():
         serial.send_command(f"G91 ; Relative positioning")
         serial.send_command(f"G1 {axis}{distance:.3f} F{speed}")
         serial.send_command(f"G90 ; Absolute positioning")
+        serial.send_command("M400 ; Wait for moves to complete")
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
