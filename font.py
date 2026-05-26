@@ -235,6 +235,35 @@ CURSIVE_WIDTHS = {
 CURSIVE_SPACE_WIDTH = 16
 
 
+def _smooth_stroke(points: list[tuple], subdivisions: int = 8) -> list[tuple]:
+    """Catmull-Rom spline interpolation between stroke points.
+
+    Passes through all original control points (no drift). Subdivisions
+    controls how many interpolated points between each pair — higher = smoother
+    curves but more G-code. 8 subdivisions keeps detail even after the
+    MIN_MOVE_DIST=0.2mm filter at small font sizes.
+    """
+    if len(points) < 3:
+        return points
+    result = [points[0]]
+    for i in range(len(points) - 1):
+        p0 = points[max(i - 1, 0)]
+        p1 = points[i]
+        p2 = points[i + 1]
+        p3 = points[min(i + 2, len(points) - 1)]
+        for t_idx in range(1, subdivisions + 1):
+            t = t_idx / subdivisions
+            t2, t3 = t * t, t * t * t
+            x = 0.5 * ((2*p1[0]) + (-p0[0]+p2[0])*t +
+                (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 +
+                (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3)
+            y = 0.5 * ((2*p1[1]) + (-p0[1]+p2[1])*t +
+                (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 +
+                (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+            result.append((x, y))
+    return result
+
+
 def _build_cursive_chains():
     """Precompute which strokes form the connected body vs extras for each letter.
 
@@ -350,7 +379,7 @@ def text_to_strokes(text: str, x: float = 0, y: float = 0,
                 all_strokes.append(scaled)
             cx += CHAR_WIDTH * scale + spacing
 
-    return all_strokes
+    return [_smooth_stroke(s) for s in all_strokes]
 
 
 def _cursive_line_width(line: str, scale: float, spacing: float) -> float:
@@ -482,7 +511,7 @@ def text_to_cursive(text: str, x: float = 0, y: float = 0,
             all_strokes.append(current_stroke)
         all_strokes.extend(extra_strokes)
 
-    return all_strokes
+    return [_smooth_stroke(s) for s in all_strokes]
 
 
 def measure_text(text: str, scale: float = 3.0, spacing: float = 1.5,
