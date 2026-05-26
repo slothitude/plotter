@@ -39,12 +39,15 @@ The Scriptorium panel generates plotter-ready text with two fonts:
 - **Hershey** — single-stroke Gothic, clean and technical
 - **Script Simplex** — cursive, lowercase letters chained into continuous strokes
 
-Both fonts are vector-only (no fills), designed for pen plotters. Text is rendered in page-space with automatic word-wrap:
+Both fonts are vector-only (no fills), designed for pen plotters. Catmull-Rom spline interpolation (8 subdivisions) smooths the sparse glyph data into dense curves before G-code emission, producing clean output at any font size. The existing RDP simplification and micro-move filter naturally cull redundant interpolated points.
+
+Text is rendered in page-space with automatic word-wrap:
 
 - Measures word widths in mm to wrap within page margins
 - Supports multi-paragraph text with `\n` line breaks
 - Configurable font size, margin, and line spacing
 - Cursive defaults to 2.0x line spacing to prevent descender overlap
+- Cursive lowercase letters chain into continuous strokes (pen stays down within words)
 
 ```json
 POST /api/test-pattern
