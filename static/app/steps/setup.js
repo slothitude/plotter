@@ -167,12 +167,14 @@ function loadCalibration() {
             div.className = 'cal-saved-item';
             const ox = heights.offset_x || 0;
             const oy = heights.offset_y || 0;
-            div.innerHTML = `
-                <span class="tool-name">${tool}</span>
-                <span class="height-values">
-                    Down: ${heights.pen_down_z.toFixed(3)} Up: ${heights.pen_up_z.toFixed(3)}<br>
-                    Pen offset: X=${(BED_CENTER - ox).toFixed(1)} Y=${(BED_CENTER - oy).toFixed(1)}
-                </span>`;
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'tool-name';
+            nameSpan.textContent = tool;
+            const valSpan = document.createElement('span');
+            valSpan.className = 'height-values';
+            valSpan.textContent = `Down: ${heights.pen_down_z.toFixed(3)} Up: ${heights.pen_up_z.toFixed(3)}\nPen offset: X=${(BED_CENTER - ox).toFixed(1)} Y=${(BED_CENTER - oy).toFixed(1)}`;
+            div.appendChild(nameSpan);
+            div.appendChild(valSpan);
             list.appendChild(div);
         }
     });

@@ -291,11 +291,15 @@ function initCanvasOverlays() {
 function updateStatsDisplay(stats) {
     const el = document.getElementById('plot-stats');
     if (!el || !stats) return;
+    const sc = Number(stats.stroke_count) || 0;
+    const dist = Number(stats.draw_distance_mm || stats.total_distance) || 0;
+    const time = Number(stats.estimated_time_s || stats.estimated_time) || 0;
+    const lines = Number(getState().gcodeLineCount) || 0;
     el.innerHTML = `
-        <div class="stat-item"><span class="stat-label">Strokes</span><span class="stat-value">${stats.stroke_count || 0}</span></div>
-        <div class="stat-item"><span class="stat-label">Distance</span><span class="stat-value">${(stats.draw_distance_mm || stats.total_distance || 0).toFixed(1)} mm</span></div>
-        <div class="stat-item"><span class="stat-label">Time</span><span class="stat-value">${formatTime(stats.estimated_time_s || stats.estimated_time || 0)}</span></div>
-        <div class="stat-item"><span class="stat-label">Lines</span><span class="stat-value">${getState().gcodeLineCount || 0}</span></div>
+        <div class="stat-item"><span class="stat-label">Strokes</span><span class="stat-value">${sc}</span></div>
+        <div class="stat-item"><span class="stat-label">Distance</span><span class="stat-value">${dist.toFixed(1)} mm</span></div>
+        <div class="stat-item"><span class="stat-label">Time</span><span class="stat-value">${formatTime(time)}</span></div>
+        <div class="stat-item"><span class="stat-label">Lines</span><span class="stat-value">${lines}</span></div>
     `;
 }
 

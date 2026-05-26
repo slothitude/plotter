@@ -30,7 +30,12 @@ function uploadSvg(file) {
             const info = document.getElementById('upload-info');
             if (info) {
                 info.classList.remove('hidden');
-                info.innerHTML = `Uploaded: <span class="filename">${file.name}</span> \u00b7 ${data.stroke_count} strokes`;
+                const fn = info.querySelector('.filename') || document.createElement('span');
+                fn.className = 'filename';
+                fn.textContent = file.name;
+                info.innerHTML = 'Uploaded: ';
+                info.appendChild(fn);
+                info.append(` \u00b7 ${data.stroke_count} strokes`);
             }
 
             redrawCanvas('create-canvas');

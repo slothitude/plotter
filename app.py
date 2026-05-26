@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 import uuid
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from pathlib import Path
 
 import cv2
@@ -29,11 +29,26 @@ import manga
 import serial_conn
 
 app = Flask(__name__, static_folder="static")
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB upload limit
 sock = Sock(app)
 
 # Global state
 serial = serial_conn.SerialConnection()
 SERIAL_PORT_FILE = Path(__file__).parent / "serial_port.txt"
+
+logger = app.logger
+
+
+def _safe_error(e: Exception, context: str = "Operation") -> str:
+    """Log full exception, return safe message for client."""
+    logger.exception("%s failed", context)
+    # Preserve known user-facing errors, sanitize unexpected ones
+    msg = str(e)
+    if any(kw in msg for kw in ("not calibrated", "not found", "not connected",
+                                  "No file", "Only SVG", "Invalid", "Too complex",
+                                  "No strokes", "SVG too complex")):
+        return msg
+    return f"{context} failed"
 
 
 def _ensure_connected():
@@ -55,6 +70,11 @@ def _ensure_connected():
         except Exception:
             return False
     return False
+
+
+def _run_in_thread(fn, *args, **kwargs):
+    """Run a blocking serial operation in a background thread."""
+    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
 
 
 def _raise_to_safe():
@@ -87,9 +107,12 @@ wc_context: dict[str, dict] = {}  # id -> {tool, transform_kwargs} for two-pass 
 ws_clients: list = []
 MAX_STORE_SIZE = 100
 
+# Thread lock for all shared state mutations
+_stores_lock = threading.Lock()
+
 
 def _trim_stores():
-    """Evict oldest entries if stores exceed MAX_STORE_SIZE."""
+    """Evict oldest entries if stores exceed MAX_STORE_SIZE. Must hold _stores_lock."""
     for store in (uploaded_svgs, generated_gcode, text_polylines, wc_context):
         while len(store) > MAX_STORE_SIZE:
             oldest = next(iter(store))
@@ -213,40 +236,48 @@ def _broadcast_progress(completed, total, info):
         "info": info,
         "stats": serial.last_print_stats,
     })
-    for ws in ws_clients[:]:
+    with _stores_lock:
+        clients = ws_clients[:]
+    for ws in clients:
         try:
             ws.send(msg)
         except Exception:
-            try:
-                ws_clients.remove(ws)
-            except ValueError:
-                pass
+            with _stores_lock:
+                try:
+                    ws_clients.remove(ws)
+                except ValueError:
+                    pass
 
 
 def _broadcast_ink(points):
     """Broadcast ink stroke data to all connected WebSocket clients."""
     msg = json.dumps({"type": "ink", "points": points})
-    for ws in ws_clients[:]:
+    with _stores_lock:
+        clients = ws_clients[:]
+    for ws in clients:
         try:
             ws.send(msg)
         except Exception:
-            try:
-                ws_clients.remove(ws)
-            except ValueError:
-                pass
+            with _stores_lock:
+                try:
+                    ws_clients.remove(ws)
+                except ValueError:
+                    pass
 
 
 @sock.route("/ws")
 def websocket(ws):
-    ws_clients.append(ws)
+    with _stores_lock:
+        ws_clients.append(ws)
     try:
         while True:
             ws.receive()  # Keep alive
     except Exception:
         pass
     finally:
-        if ws in ws_clients:
-            ws_clients.remove(ws)
+        with _stores_lock:
+            if ws in ws_clients:
+                ws_clients.remove(ws)
 
 
 # ── Web UI ───────────────────────────────────────────────────────────
@@ -285,7 +316,7 @@ def serial_connect():
         _raise_to_safe()
         return jsonify({"ok": True, "port": port})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/serial/disconnect", methods=["POST"])
@@ -320,6 +351,8 @@ def send_command():
     command = data.get("command", "").strip()
     if not command:
         return jsonify({"error": "command required"}), 400
+    if "\n" in command or "\r" in command:
+        return jsonify({"error": "Multi-line commands not allowed"}), 400
     # Only allow safe movement/control commands
     allowed_prefixes = ("G0", "G1", "G4", "G28", "G90", "G91", "M84", "M112")
     cmd_upper = command.upper().split(";")[0].strip()
@@ -329,28 +362,35 @@ def send_command():
         serial.send_command(command)
         return jsonify({"ok": True, "command": command})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 # ── Upload & Convert ────────────────────────────────────────────────
 
 def _get_transform_params(data: dict) -> dict:
-    """Extract transform parameters from request data."""
+    """Extract transform parameters from request data with validation."""
+    def _clamp(val, lo, hi, default):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
     return {
         "optimize": bool(data.get("optimize", True)),
         "simplify": bool(data.get("simplify", False)),
-        "simplify_tolerance": float(data.get("simplify_tolerance", 0.1)),
-        "user_scale": float(data.get("scale", 1.0)),
-        "user_rotate": float(data.get("rotate", 0.0)),
-        "user_translate_x": float(data.get("translate_x", 0.0)),
-        "user_translate_y": float(data.get("translate_y", 0.0)),
+        "simplify_tolerance": _clamp(data.get("simplify_tolerance", 0.1), 0.01, 10.0, 0.1),
+        "user_scale": _clamp(data.get("scale", 1.0), 0.01, 100.0, 1.0),
+        "user_rotate": _clamp(data.get("rotate", 0.0), -360.0, 360.0, 0.0),
+        "user_translate_x": _clamp(data.get("translate_x", 0.0), -500.0, 500.0, 0.0),
+        "user_translate_y": _clamp(data.get("translate_y", 0.0), -500.0, 500.0, 0.0),
         "mirror_x": bool(data.get("mirror_x", False)),
         "mirror_y": bool(data.get("mirror_y", False)),
         "no_fit": bool(data.get("no_fit", False)),
-        "bed_x": float(data.get("page_width", config.PRINTER_BED_X)),
-        "bed_y": float(data.get("page_height", config.PRINTER_BED_Y)),
-        "page_offset_x": float(data.get("page_offset_x", 0)),
-        "page_offset_y": float(data.get("page_offset_y", 0)),
+        "bed_x": _clamp(data.get("page_width", config.PRINTER_BED_X), 10, 500, config.PRINTER_BED_X),
+        "bed_y": _clamp(data.get("page_height", config.PRINTER_BED_Y), 10, 500, config.PRINTER_BED_Y),
+        "page_offset_x": _clamp(data.get("page_offset_x", 0), 0, 500, 0),
+        "page_offset_y": _clamp(data.get("page_offset_y", 0), 0, 500, 0),
     }
 
 
@@ -367,7 +407,9 @@ def upload_svg():
     out_path = config.OUTPUT_DIR / f"{file_id}.svg"
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     f.save(out_path)
-    uploaded_svgs[file_id] = str(out_path)
+    with _stores_lock:
+        uploaded_svgs[file_id] = str(out_path)
+        _trim_stores()
 
     # Parse for preview
     try:
@@ -403,17 +445,19 @@ def convert_svg():
                 two_pass = True
                 pass2_gc = meta["pass2_gcode"]
                 id_pass2 = f"{file_id}_pass2"
-                generated_gcode[id_pass2] = pass2_gc
+                with _stores_lock:
+                    generated_gcode[id_pass2] = pass2_gc
                 gc = meta["pass1_gcode"]  # primary is now pass1
                 # Also save pass2 G-code file
                 gcode_path_p2 = config.OUTPUT_DIR / f"{id_pass2}.gcode"
                 with open(gcode_path_p2, "w") as f:
                     f.write(pass2_gc)
                 # Store context for pass2 reconversion after recalibration
-                wc_context[file_id] = {
-                    "tool": tool_name,
-                    "transform_kwargs": transform_kwargs,
-                }
+                with _stores_lock:
+                    wc_context[file_id] = {
+                        "tool": tool_name,
+                        "transform_kwargs": transform_kwargs,
+                    }
         else:
             # Direct polyline conversion (text patterns — no SVG round-trip)
             raw_polylines = text_polylines[file_id]
@@ -473,8 +517,9 @@ def convert_svg():
             )
             polylines = preview_polylines
 
-        generated_gcode[file_id] = gc
-        _trim_stores()
+        with _stores_lock:
+            generated_gcode[file_id] = gc
+            _trim_stores()
 
         # Save G-code file
         gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
@@ -511,7 +556,7 @@ def convert_svg():
             resp["id_pass2"] = id_pass2
         return jsonify(resp)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/convert-pass2", methods=["POST"])
@@ -590,7 +635,8 @@ def convert_pass2():
             return jsonify({"error": "Water tool profile no longer has two-pass enabled"}), 400
 
         id_pass2 = f"{file_id}_pass2"
-        generated_gcode[id_pass2] = pass2_gc
+        with _stores_lock:
+            generated_gcode[id_pass2] = pass2_gc
 
         # Save pass2 file
         gcode_path_p2 = config.OUTPUT_DIR / f"{id_pass2}.gcode"
@@ -605,7 +651,7 @@ def convert_pass2():
             "ok": True,
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/test-pattern", methods=["POST"])
@@ -731,7 +777,8 @@ def test_pattern():
         svg_path = f"output/{svg_id}.svg"
         with open(svg_path, "w") as f:
             f.write(svg_content)
-        uploaded_svgs[svg_id] = svg_path
+        with _stores_lock:
+            uploaded_svgs[svg_id] = svg_path
         polylines = gcode.parse_svg(svg_path)
         return jsonify({
             "id": svg_id,
@@ -896,9 +943,8 @@ def test_pattern():
             return jsonify({"error": "No strokes generated"}), 400
 
         file_id = uuid.uuid4().hex[:8]
-        text_polylines[file_id] = polylines
-
-        preview = [[(round(p[0], 2), round(p[1], 2)) for p in pl.points] for pl in polylines]
+        with _stores_lock:
+            text_polylines[file_id] = polylines
         return jsonify({
             "id": file_id,
             "polylines": preview,
@@ -915,7 +961,8 @@ def test_pattern():
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         f.write(svg_content)
-    uploaded_svgs[file_id] = str(out_path)
+    with _stores_lock:
+        uploaded_svgs[file_id] = str(out_path)
 
     # For geometric patterns, also generate G-code with transforms
     tool = data.get("tool", "pencil")
@@ -925,7 +972,8 @@ def test_pattern():
         gc, polylines, toolpath_data, stats, meta = gcode.svg_to_gcode(
             str(out_path), tool, **transform_kwargs
         )
-        generated_gcode[file_id] = gc
+        with _stores_lock:
+            generated_gcode[file_id] = gc
         gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
         with open(gcode_path, "w") as f:
             f.write(gc)
@@ -964,10 +1012,15 @@ def test_pattern():
 
 @app.route("/api/download/<file_id>")
 def download_gcode(file_id):
+    if not re.match(r'^[a-zA-Z0-9_-]+$', file_id):
+        return jsonify({"error": "Invalid file ID"}), 400
     gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
-    if not gcode_path.exists():
+    resolved = gcode_path.resolve()
+    if not str(resolved).startswith(str(config.OUTPUT_DIR.resolve())):
+        return jsonify({"error": "Invalid file ID"}), 400
+    if not resolved.exists():
         return jsonify({"error": "G-code not found"}), 404
-    return send_file(gcode_path, as_attachment=True, download_name=f"plot_{file_id}.gcode")
+    return send_file(resolved, as_attachment=True, download_name=f"plot_{file_id}.gcode")
 
 
 # ── Toon Tracer ──────────────────────────────────────────────────────
@@ -1083,7 +1136,8 @@ def trace_image():
     dwg.save()
 
     # Register in uploaded_svgs so existing convert/plot pipeline works
-    uploaded_svgs[file_id] = str(svg_path)
+    with _stores_lock:
+        uploaded_svgs[file_id] = str(svg_path)
 
     # Build polyline data for canvas preview (pixel coords)
     preview_polylines = []
@@ -1101,10 +1155,15 @@ def trace_image():
 
 @app.route("/api/trace-svg/<file_id>")
 def download_trace_svg(file_id):
+    if not re.match(r'^[a-zA-Z0-9_-]+$', file_id):
+        return jsonify({"error": "Invalid file ID"}), 400
     svg_path = config.OUTPUT_DIR / f"trace_{file_id}.svg"
-    if not svg_path.exists():
+    resolved = svg_path.resolve()
+    if not str(resolved).startswith(str(config.OUTPUT_DIR.resolve())):
+        return jsonify({"error": "Invalid file ID"}), 400
+    if not resolved.exists():
         return jsonify({"error": "SVG not found"}), 404
-    return send_file(svg_path, as_attachment=True, download_name=f"trace_{file_id}.svg")
+    return send_file(resolved, as_attachment=True, download_name=f"trace_{file_id}.svg")
 
 
 # ── Ink / Wacom Slate ────────────────────────────────────────────────
@@ -1167,7 +1226,7 @@ def ink_live_start():
         _live_plot_active = True
         return jsonify({"ok": True, "message": "Live plot started"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/ink/live-stop", methods=["POST"])
@@ -1255,7 +1314,8 @@ def ink_stop():
             dwg.add(dwg.polyline(pts, stroke="black", fill="none", stroke_width=0.5))
 
     dwg.save()
-    uploaded_svgs[file_id] = str(svg_path)
+    with _stores_lock:
+        uploaded_svgs[file_id] = str(svg_path)
     _slate_process = None
 
     return jsonify({"id": file_id, "stroke_count": stroke_count})
@@ -1315,7 +1375,8 @@ def ink_load_page():
     dst = config.OUTPUT_DIR / f"ink_{file_id}.svg"
     shutil.copy2(src, str(dst))
 
-    uploaded_svgs[file_id] = str(dst)
+    with _stores_lock:
+        uploaded_svgs[file_id] = str(dst)
 
     # Count strokes
     try:
@@ -1622,11 +1683,39 @@ def print_raw():
         return jsonify({"error": "gcode required"}), 400
     if not _ensure_connected():
         return jsonify({"error": "Printer not connected"}), 400
+    # Validate each line for safety
+    BED_MAX = 220
+    Z_MIN, Z_MAX = -1, 50
+    blocked_prefixes = ("M104", "M106", "M140", "M303", "M999", "M503", "M500")
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        cmd = line.split(";")[0].strip().upper()
+        if any(cmd.startswith(b) for b in blocked_prefixes):
+            return jsonify({"error": f"Blocked command: {cmd.split()[0]}"}), 400
+        # Check coordinate bounds
+        for part in cmd.split():
+            try:
+                if part.startswith("X"):
+                    val = float(part[1:])
+                    if val < 0 or val > BED_MAX:
+                        return jsonify({"error": f"X{val} out of bounds (0-{BED_MAX})"}), 400
+                elif part.startswith("Y"):
+                    val = float(part[1:])
+                    if val < 0 or val > BED_MAX:
+                        return jsonify({"error": f"Y{val} out of bounds (0-{BED_MAX})"}), 400
+                elif part.startswith("Z"):
+                    val = float(part[1:])
+                    if val < Z_MIN or val > Z_MAX:
+                        return jsonify({"error": f"Z{val} out of bounds ({Z_MIN}-{Z_MAX})"}), 400
+            except ValueError:
+                continue
     try:
         serial.send_gcode_file(raw, filename="raw", progress_callback=_broadcast_progress)
         return jsonify({"ok": True, "message": "Printing raw G-code"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/print", methods=["POST"])
@@ -1647,7 +1736,7 @@ def start_print():
         )
         return jsonify({"ok": True, "message": "Printing started"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/stop", methods=["POST"])
@@ -1694,7 +1783,7 @@ def jog():
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/home", methods=["POST"])
@@ -1702,21 +1791,25 @@ def home():
     """Park at water cup position (origin) instead of full endstop home."""
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
-    try:
-        _raise_to_safe()
-        time.sleep(1.5)
-        serial.send_command("G28")                                    # home to establish position
-        time.sleep(12)                                                # wait for homing to complete
-        _raise_to_safe()
-        time.sleep(1.5)
-        serial.send_command("G1 X0.000 Y0.000 F3000")                 # move to origin
-        time.sleep(3)
-        serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F300")         # park at safe Z
-        time.sleep(1.5)
-        pos = serial.get_position()
-        return jsonify({"ok": True, "position": pos})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    def _do_home():
+        try:
+            _raise_to_safe()
+            time.sleep(1.5)
+            serial.send_command("G28")
+            time.sleep(12)
+            _raise_to_safe()
+            time.sleep(1.5)
+            serial.send_command("G1 X0.000 Y0.000 F3000")
+            time.sleep(3)
+            serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F300")
+            time.sleep(1.5)
+            serial.get_position()
+        except Exception:
+            pass
+
+    _run_in_thread(_do_home)
+    return jsonify({"ok": True, "message": "Homing started"})
 
 
 # ── Calibration ──────────────────────────────────────────────────────
@@ -1726,19 +1819,22 @@ def calibration_start():
     """Move to calibration position: home, then Z20 X110 Y110 for pen loading."""
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
-    try:
-        _raise_to_safe()
-        time.sleep(1.5)
-        serial.send_command("G28 ; Home all axes")
-        time.sleep(12)
-        _raise_to_safe()
-        time.sleep(1)
-        serial.send_command("G1 X110.000 Y110.000 F3000 ; Move to center")
-        serial.send_command("G1 Z20.000 F500 ; Lower to pen-load height")
-        pos = serial.get_position()
-        return jsonify({"ok": True, "position": pos})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    def _do_cal():
+        try:
+            _raise_to_safe()
+            time.sleep(1.5)
+            serial.send_command("G28 ; Home all axes")
+            time.sleep(12)
+            _raise_to_safe()
+            time.sleep(1)
+            serial.send_command("G1 X110.000 Y110.000 F3000 ; Move to center")
+            serial.send_command("G1 Z20.000 F500 ; Lower to pen-load height")
+        except Exception:
+            pass
+
+    _run_in_thread(_do_cal)
+    return jsonify({"ok": True, "message": "Calibration move started"})
 
 
 @app.route("/api/calibration/pen-loaded", methods=["POST"])
@@ -1753,7 +1849,7 @@ def calibration_pen_loaded():
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/calibration", methods=["GET"])
@@ -1812,7 +1908,7 @@ def calibration_step():
         pos = serial.get_position()
         return jsonify({"ok": True, "position": pos})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 @app.route("/api/calibration/test-dot", methods=["POST"])
@@ -1831,7 +1927,7 @@ def test_dot():
         serial.send_command(f"G1 Z{ht.pen_up_z:.3f} F500")
         return jsonify({"ok": True})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 # ── Mark Page Outline ─────────────────────────────────────────────────
@@ -1889,34 +1985,34 @@ def mark_page():
     arm = 10.0  # mm mark length
 
     try:
-        _raise_to_safe()
-        time.sleep(0.5)
-        serial.send_command(f"G90 ; Absolute positioning")
-
-        for i, (bx, by) in enumerate(corners_bed):
-            # Convert bed coords to hotend coords (same as gcode.py transform)
-            hx = round(bx - pen_dx, 3)
-            hy = round(by - pen_dy, 3)
-
-            # Draw L-shape at corner
-            dx = arm if i in (0, 3) else -arm  # mark inward
-            dy = arm if i in (0, 1) else -arm
-
-            serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} F{mv.travel_speed:.0f} ; Corner {i+1}")
-            time.sleep(1)
-            serial.send_command(f"G1 Z{pen_down_z:.3f} F300 ; Pen down")
+        def _do_mark():
+            _raise_to_safe()
             time.sleep(0.5)
-            serial.send_command(f"G1 X{hx + dx:.3f} Y{hy:.3f} F500 ; Mark X")
-            time.sleep(0.5)
-            serial.send_command(f"G1 X{hx + dx:.3f} Y{hy + dy:.3f} F500 ; Mark Y")
-            time.sleep(0.5)
-            serial.send_command(f"G1 Z{safe_z:.3f} F300 ; Pen up")
-            time.sleep(0.5)
+            serial.send_command(f"G90 ; Absolute positioning")
 
-        serial.send_command("G0 X0 Y0 F3000 ; Return home")
-        return jsonify({"ok": True})
+            for i, (bx, by) in enumerate(corners_bed):
+                hx = round(bx - pen_dx, 3)
+                hy = round(by - pen_dy, 3)
+                dx = arm if i in (0, 3) else -arm
+                dy = arm if i in (0, 1) else -arm
+
+                serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} F{mv.travel_speed:.0f} ; Corner {i+1}")
+                time.sleep(1)
+                serial.send_command(f"G1 Z{pen_down_z:.3f} F300 ; Pen down")
+                time.sleep(0.5)
+                serial.send_command(f"G1 X{hx + dx:.3f} Y{hy:.3f} F500 ; Mark X")
+                time.sleep(0.5)
+                serial.send_command(f"G1 X{hx + dx:.3f} Y{hy + dy:.3f} F500 ; Mark Y")
+                time.sleep(0.5)
+                serial.send_command(f"G1 Z{safe_z:.3f} F300 ; Pen up")
+                time.sleep(0.5)
+
+            serial.send_command("G0 X0 Y0 F3000 ; Return home")
+
+        _run_in_thread(_do_mark)
+        return jsonify({"ok": True, "message": "Marking page"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": _safe_error(e, "Operation")}), 500
 
 
 # ── Bed Leveling ─────────────────────────────────────────────────────
@@ -2035,7 +2131,7 @@ def tool_change_park():
             pos = serial.get_position()
             return jsonify({"ok": True, "position": pos})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": _safe_error(e, "Operation")}), 500
 
     elif action == "save":
         try:
@@ -2049,7 +2145,7 @@ def tool_change_park():
             config.save_profile(tool, profile)
             return jsonify({"ok": True, "change_x": x, "change_y": y, "change_z": z})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": _safe_error(e, "Operation")}), 500
 
     return jsonify({"error": f"Unknown action: {action}"}), 400
 
@@ -2291,8 +2387,9 @@ def manga_generate():
         # Store in uploaded_svgs for the standard convert/print pipeline
         svg_id = f"manga-{uuid.uuid4().hex[:8]}"
         # Save as text polylines (bypass SVG) — store Polyline objects directly
-        text_polylines[svg_id] = polylines
-        uploaded_svgs[svg_id] = None  # no SVG file for manga
+        with _stores_lock:
+            text_polylines[svg_id] = polylines
+            uploaded_svgs[svg_id] = None  # no SVG file for manga
 
         return jsonify({
             "ok": True,

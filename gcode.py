@@ -21,6 +21,7 @@ from svgpathtools import (
 import config
 
 MIN_MOVE_DIST = 0.2  # mm — skip sub-threshold micro-moves
+MAX_TOTAL_POINTS = 500_000  # reject SVGs that parse into more points than this
 
 
 # ── Data structures ─────────────────────────────────────────────────
@@ -216,6 +217,9 @@ def parse_svg(svg_path: str) -> list[Polyline]:
         print(f"  SVG shape parse warning: {e}", flush=True)
     if not polylines:
         raise ValueError(f"SVG file contains no drawable elements: {svg_path}")
+    total_pts = sum(len(pl.points) for pl in polylines)
+    if total_pts > MAX_TOTAL_POINTS:
+        raise ValueError(f"SVG too complex: {total_pts} points (max {MAX_TOTAL_POINTS}). Simplify or reduce detail.")
     return polylines
 
 
@@ -228,6 +232,9 @@ def _distance(p1: tuple[float, float], p2: tuple[float, float]) -> float:
 def optimize_path(polylines: list[Polyline]) -> list[Polyline]:
     """Reorder polylines using nearest-neighbor to minimize travel."""
     if len(polylines) <= 1:
+        return polylines
+    if len(polylines) > 10000:
+        print(f"  Skipping optimization: {len(polylines)} polylines (max 10k)", flush=True)
         return polylines
 
     remaining = list(range(len(polylines)))

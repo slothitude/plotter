@@ -46,8 +46,9 @@ class SerialConnection:
         return ports
 
     def connect(self, port: str, baudrate: int = 250000) -> bool:
-        if self._serial and self._serial.is_open:
-            self.disconnect()
+        with self._lock:
+            if self._serial and self._serial.is_open:
+                self._disconnect_locked()
         try:
             self._serial = serial.Serial(port, baudrate, timeout=1, write_timeout=5)
             self._last_port = port
@@ -58,23 +59,33 @@ class SerialConnection:
             self._serial = None
             raise ConnectionError(f"Failed to connect to {port}: {e}")
 
+    def _disconnect_locked(self):
+        """Close serial and stop threads. Caller must hold self._lock."""
+        self._stop_requested = True
+        self._sending = False
+        self._live_sending = False
+        # Threads check these flags — give them a moment to exit
+        sender = self._sender_thread
+        live = self._live_thread
+        self._lock.release()
+        try:
+            if sender and sender.is_alive():
+                sender.join(timeout=3)
+            if live and live.is_alive():
+                live.join(timeout=3)
+        finally:
+            self._lock.acquire()
+        if self._serial and self._serial.is_open:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+        self._serial = None
+        self._stop_requested = False
+
     def disconnect(self):
         with self._lock:
-            self._stop_requested = True
-            self._sending = False
-            self._live_sending = False
-        # Wait for threads to finish before closing serial
-        if self._sender_thread and self._sender_thread.is_alive():
-            self._sender_thread.join(timeout=3)
-        if self._live_thread and self._live_thread.is_alive():
-            self._live_thread.join(timeout=3)
-        with self._lock:
-            if self._serial and self._serial.is_open:
-                try:
-                    self._serial.close()
-                except Exception:
-                    pass
-            self._serial = None
+            self._disconnect_locked()
 
     @property
     def is_connected(self) -> bool:
