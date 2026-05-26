@@ -167,9 +167,23 @@ def load_profile(tool_name: str) -> ToolProfile:
     cal = load_calibration()
     if tool_name in cal:
         profile.height.pen_down_z = cal[tool_name]["pen_down_z"]
-        profile.height.pen_up_z = cal[tool_name].get("pen_up_z", profile.height.pen_down_z + profile.movement.lift_height)
         profile.height.offset_x = cal[tool_name].get("offset_x", 0.0)
         profile.height.offset_y = cal[tool_name].get("offset_y", 0.0)
+
+        # Auto-calculate pen_up from calibrated pen_down
+        if "pen_up_z" in cal[tool_name]:
+            profile.height.pen_up_z = cal[tool_name]["pen_up_z"]
+        else:
+            profile.height.pen_up_z = profile.height.pen_down_z + profile.movement.lift_height
+
+        # Watercolor: derive cup/dip from pen_down_z
+        if profile.water.enabled:
+            profile.water.cup_height = profile.height.pen_down_z + 10.0  # scrape height
+            profile.water.dip_depth = profile.height.pen_down_z  # dip to Z=0 (bed/water level)
+
+        # Pass 2 uses same calibrated pen_down_z
+        if profile.water.two_pass:
+            profile.water.pass2.pen_down_z = profile.height.pen_down_z
 
     return profile
 

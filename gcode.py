@@ -462,7 +462,7 @@ def _water_dip_gcode(profile: config.ToolProfile, travel_speed: float = None,
     """Generate G-code for a water/brush dip + rim scrape sequence."""
     w = profile.water
     lines = []
-    dip_z = w.cup_height - w.dip_depth
+    dip_z = profile.height.pen_down_z - w.dip_depth
 
     _safe_z = safe_z if safe_z is not None else max(config.SAFE_Z, profile.height.pen_up_z)
     _travel = travel_speed if travel_speed is not None else profile.movement.travel_speed
@@ -537,20 +537,17 @@ def _emit_stroke_pass(
     return segment_count
 
 
-def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scaled_h,
-                    scale, eff_ox, eff_oy, eff_w, eff_h, user_scale, user_rotate,
-                    page_offset_x=0.0, page_offset_y=0.0):
-    """Generate two-pass G-code: dry pencil draw then wet brush retrace."""
+def _watercolor_pass1_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scaled_h,
+                            scale, user_scale, user_rotate):
+    """Generate standalone G-code for watercolor Pass 1: dry pencil draw."""
     mv = profile.movement
     ht = profile.height
-    wt = profile.water
-    p2 = wt.pass2
+    safe_z = max(config.SAFE_Z, ht.pen_up_z)
 
     lines = []
     toolpath = []
 
-    # Header
-    lines.append("; Pen Plotter G-code — TWO-PASS WATERCOLOR")
+    lines.append("; Pen Plotter G-code — WATERCOLOR PASS 1 (Pencil)")
     lines.append(f"; Tool: {profile.name}")
     lines.append(f"; Original SVG: {svg_w:.1f} x {svg_h:.1f} mm")
     lines.append(f"; Scaled to: {scaled_w:.1f} x {scaled_h:.1f} mm (scale {scale:.4f})")
@@ -561,17 +558,7 @@ def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scale
     lines.append("")
     lines.append("G28 ; Home all axes")
     lines.append("G90 ; Absolute positioning")
-
-    pass1_safe_z = max(config.SAFE_Z, ht.pen_up_z)
-    pass1_lift_z = ht.pen_up_z  # Use profile lift height for between-stroke lifts
-    pass2_safe_z = max(config.SAFE_Z, p2.lift_height)
-    pass2_lift_z = p2.lift_height if p2.lift_height > 0 else ht.pen_up_z
-
-    lines.append(f"G1 Z{pass1_safe_z:.3f} F{mv.travel_speed:.0f} ; Safe travel height")
-    lines.append("")
-
-    # ── PASS 1: Dry pencil draw ──
-    lines.append("; ===== PASS 1: DRY DRAW =====")
+    lines.append(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe travel height")
     lines.append("")
 
     _emit_stroke_pass(
@@ -579,50 +566,98 @@ def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scale
         draw_speed=mv.draw_speed,
         travel_speed=mv.travel_speed,
         pen_down_z=ht.pen_down_z,
-        safe_z=pass1_safe_z,
-        pen_lift_z=pass1_lift_z,
-        water_cfg=None,       # no water dips in dry pass
+        safe_z=safe_z,
+        pen_lift_z=ht.pen_up_z,
+        water_cfg=None,
         profile=None,
         initial_dip=False,
         segment_start=0,
     )
 
-    # ── TOOL CHANGE: Park for pencil→brush swap ──
+    # Park
     lines.append("")
-    lines.append("; ===== TOOL CHANGE: SWAP PENCIL FOR WET BRUSH =====")
-    lines.append("G1 Z{:.3f} F{:.0f} ; Raise for tool swap".format(p2.change_z, mv.travel_speed))
-    lines.append("G1 X{:.3f} Y{:.3f} F{:.0f} ; Park for tool swap".format(p2.change_x, p2.change_y, mv.travel_speed))
-    lines.append("M0 ; PAUSE — Swap pencil for wet brush, then press resume")
-    lines.append("")
+    lines.append("; Park")
+    lines.append(f"G1 Z{safe_z:.3f} F{mv.travel_speed:.0f} ; Safe Z")
+    lines.append("G0 X0 Y0 ; Home position")
+    lines.append("M84 ; Disable motors")
 
-    # ── PASS 2: Wet brush retrace ──
-    lines.append("; ===== PASS 2: WET BRUSH =====")
+    return "\n".join(lines), toolpath
+
+
+def _watercolor_pass2_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scaled_h,
+                            scale, user_scale, user_rotate):
+    """Generate standalone G-code for watercolor Pass 2: wet brush retrace with dips."""
+    mv = profile.movement
+    ht = profile.height
+    wt = profile.water
+    p2 = wt.pass2
+    safe_z = max(config.SAFE_Z, p2.lift_height)
+
+    lines = []
+    toolpath = []
+
+    lines.append("; Pen Plotter G-code — WATERCOLOR PASS 2 (Brush)")
+    lines.append(f"; Tool: {profile.name}")
+    lines.append(f"; Original SVG: {svg_w:.1f} x {svg_h:.1f} mm")
+    lines.append(f"; Scaled to: {scaled_w:.1f} x {scaled_h:.1f} mm (scale {scale:.4f})")
+    if user_scale != 1.0:
+        lines.append(f"; User scale: {user_scale:.2f}")
+    if user_rotate != 0.0:
+        lines.append(f"; User rotate: {user_rotate:.1f} deg")
+    lines.append("")
+    lines.append("G28 ; Home all axes")
+    lines.append("G90 ; Absolute positioning")
+    lines.append(f"G1 Z{safe_z:.3f} F{p2.travel_speed:.0f} ; Safe travel height")
     lines.append("")
 
     _emit_stroke_pass(
         polylines, transform, lines, toolpath,
         draw_speed=p2.draw_speed,
         travel_speed=p2.travel_speed,
-        pen_down_z=p2.pen_down_z if p2.pen_down_z != 0.0 else ht.pen_down_z,
-        safe_z=pass2_safe_z,
-        pen_lift_z=pass2_lift_z,
-        water_cfg=wt,         # periodic water dips
+        pen_down_z=ht.pen_down_z,
+        safe_z=safe_z,
+        pen_lift_z=ht.pen_down_z + p2.lift_height,
+        water_cfg=wt,
         profile=profile,
-        initial_dip=True,     # dip brush before first stroke
+        initial_dip=True,
         segment_start=0,
     )
 
-    # Footer
+    # Park
     lines.append("")
     lines.append("; Park")
-    lines.append(f"G1 Z{pass2_safe_z:.3f} F{p2.travel_speed:.0f} ; Safe Z")
+    lines.append(f"G1 Z{safe_z:.3f} F{p2.travel_speed:.0f} ; Safe Z")
     lines.append("G0 X0 Y0 ; Home position")
     lines.append("M84 ; Disable motors")
 
-    return "\n".join(lines), toolpath, {
+    return "\n".join(lines), toolpath
+
+
+def _two_pass_gcode(polylines, transform, profile, svg_w, svg_h, scaled_w, scaled_h,
+                    scale, eff_ox, eff_oy, eff_w, eff_h, user_scale, user_rotate,
+                    page_offset_x=0.0, page_offset_y=0.0):
+    """Generate two separate G-code files for watercolor two-pass mode.
+
+    Returns (pass1_str, pass2_str, toolpath, meta).
+    """
+    pass1_str, toolpath = _watercolor_pass1_gcode(
+        polylines, transform, profile,
+        svg_w, svg_h, scaled_w, scaled_h, scale, user_scale, user_rotate,
+    )
+    pass2_str, toolpath2 = _watercolor_pass2_gcode(
+        polylines, transform, profile,
+        svg_w, svg_h, scaled_w, scaled_h, scale, user_scale, user_rotate,
+    )
+    toolpath.extend(toolpath2)
+
+    meta = {
         "effective_area": {"x": round(eff_ox, 1), "y": round(eff_oy, 1),
                            "width": round(eff_w, 1), "height": round(eff_h, 1)},
+        "two_pass": True,
+        "pass1_gcode": pass1_str,
+        "pass2_gcode": pass2_str,
     }
+    return pass1_str, pass2_str, toolpath, meta
 
 
 def polylines_to_gcode(
@@ -763,7 +798,7 @@ def polylines_to_gcode(
             svg_w, svg_h, scaled_w, scaled_h, scale,
             eff_ox, eff_oy, eff_w, eff_h,
             user_scale, user_rotate, page_offset_x, page_offset_y,
-        )
+        )  # Returns (pass1_str, pass2_str, toolpath, meta)
 
     # 5. Generate G-code + collect toolpath
     lines = []
@@ -860,7 +895,11 @@ def polylines_to_gcode(
 # ── High-level API ──────────────────────────────────────────────────
 
 def svg_to_gcode(svg_path: str, tool_name: str, **kwargs) -> tuple[str, list[Polyline], list[dict], PlotStats, dict]:
-    """Full pipeline: SVG file → optimized G-code + polylines + toolpath + stats + meta."""
+    """Full pipeline: SVG file → optimized G-code + polylines + toolpath + stats + meta.
+
+    For two-pass watercolor: meta contains two_pass=True, pass1_gcode, pass2_gcode.
+    The returned gcode_str is the pass1 G-code in that case.
+    """
     polylines = parse_svg(svg_path)
 
     profile = config.load_profile(tool_name)
@@ -872,7 +911,13 @@ def svg_to_gcode(svg_path: str, tool_name: str, **kwargs) -> tuple[str, list[Pol
             "Run calibration first to set the correct Z contact height."
         )
     polylines = apply_fill(polylines, profile.fill)
-    gcode_str, toolpath, meta = polylines_to_gcode(polylines, profile, **kwargs)
+    result = polylines_to_gcode(polylines, profile, **kwargs)
+
+    # Two-pass watercolor returns (pass1_str, pass2_str, toolpath, meta)
+    if profile.water.enabled and profile.water.two_pass:
+        gcode_str, _pass2_str, toolpath, meta = result
+    else:
+        gcode_str, toolpath, meta = result
 
     # Compute stats from toolpath data
     travel_segs = []

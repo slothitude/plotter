@@ -5,8 +5,8 @@ name = "Watercolor"
 draw_speed = 1000
 travel_speed = 2500
 lift_height = 5.0
-wear_rate = 0.0
-max_wear_depth = 0.0
+wear_rate = 0.025
+max_wear_depth = 1.0
 
 [height]
 pen_down_z = 0.0
@@ -19,11 +19,11 @@ enabled = true
 two_pass = true
 cup_x = 0.0
 cup_y = 0.0
-cup_height = 10.0
+cup_height = 0.0     # auto: pen_down_z + 10
 cup_diameter = 60.0
-dip_depth = 10.0
-dip_time = 500.0
-dip_interval = 50.0
+dip_depth = 0.0      # auto: pen_down_z (dips to Z=0)
+dip_time = 1500.0
+dip_interval = 10.0
 scrape_distance = 20.0
 scrape_speed = 300.0
 
@@ -36,8 +36,8 @@ angle = 45.0
 [water.pass2]
 draw_speed = 800.0
 travel_speed = 2500.0
-pen_down_z = 9.5
-lift_height = 5.0
+pen_down_z = 0.0     # overridden by calibration.json
+lift_height = 5.0    # lift above pen_down_z between strokes
 change_z = 50
 change_x = 110
 change_y = 110
