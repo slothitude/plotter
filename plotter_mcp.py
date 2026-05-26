@@ -242,6 +242,99 @@ def plotter_download_gcode(file_id: str) -> dict:
     return {"gcode": r.text}
 
 
+@mcp.tool()
+def plotter_convert_pass2(file_id: str, tool: str = "watercolor") -> dict:
+    """Regenerate watercolor pass 2 G-code with current calibration values.
+
+    Call this after recalibrating the brush Z to regenerate pass 2 with updated heights.
+
+    Args:
+        file_id: SVG file ID from a previous watercolor convert
+        tool: Tool profile name (default: watercolor)
+    """
+    return _api("POST", "/api/convert-pass2", json={"id": file_id, "tool": tool})
+
+
+@mcp.tool()
+def plotter_print_raw(gcode: str) -> dict:
+    """Send raw G-code string directly to the printer for immediate execution.
+
+    Args:
+        gcode: G-code string to send (newline-separated commands)
+    """
+    return _api("POST", "/api/print-raw", json={"gcode": gcode})
+
+
+# ── Calibration ─────────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def plotter_calibration_start() -> dict:
+    """Move to calibration position: home, then move to center (X110 Y110 Z20) for pen loading."""
+    return _api("POST", "/api/calibration/start")
+
+
+@mcp.tool()
+def plotter_calibration_pen_loaded() -> dict:
+    """Raise Z by 5mm after loading the pen/brush into the holder."""
+    return _api("POST", "/api/calibration/pen-loaded")
+
+
+@mcp.tool()
+def plotter_calibration_step(distance: float = -0.1) -> dict:
+    """Jog Z in fine steps during calibration. Returns current position.
+
+    Args:
+        distance: Z distance in mm (negative = down, default -0.1)
+    """
+    return _api("POST", "/api/calibration/step", json={"distance": distance})
+
+
+@mcp.tool()
+def plotter_calibration_test_dot(tool: str = "pencil") -> dict:
+    """Test pen contact: lower pen, dwell 1 second, raise. Used during Z calibration.
+
+    Args:
+        tool: Tool profile name for Z heights (pencil, pen, watercolor)
+    """
+    return _api("POST", "/api/calibration/test-dot", json={"tool": tool})
+
+
+# ── Page & Bed ──────────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def plotter_mark_page(tool: str = "pencil") -> dict:
+    """Draw L-marks at the 4 corners of the page for alignment verification.
+
+    Args:
+        tool: Tool profile name for Z heights
+    """
+    return _api("POST", "/api/mark-page", json={"tool": tool})
+
+
+@mcp.tool()
+def plotter_bed_level(action: str = "start", tool: str = "pencil") -> dict:
+    """Bed leveling helper — move to corners to check bed level.
+
+    Args:
+        action: "start" to begin, "next" for next corner
+        tool: Tool profile name for Z heights
+    """
+    return _api("POST", "/api/bed-level", json={"action": action, "tool": tool})
+
+
+@mcp.tool()
+def plotter_tool_change_park(action: str = "goto", tool: str = "watercolor") -> dict:
+    """Move to tool change park position or save current position as park.
+
+    Args:
+        action: "goto" to move to park position, "save" to set current position as park
+        tool: Tool profile name (uses pass2 change_x/y/z for park position)
+    """
+    return _api("POST", "/api/tool-change-park", json={"action": action, "tool": tool})
+
+
 # ── Live Plot / Capture ─────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -282,6 +375,24 @@ def plotter_ocr(file_id: str) -> dict:
     return _api("POST", "/api/ink/ocr", json={"id": file_id})
 
 
+@mcp.tool()
+def plotter_ink_status() -> dict:
+    """Check Wacom Slate capture status — is capture running, stroke count."""
+    return _api("GET", "/api/ink/status")
+
+
+@mcp.tool()
+def plotter_ink_sync() -> dict:
+    """Download stored pages from Wacom device via BLE."""
+    return _api("POST", "/api/ink/sync")
+
+
+@mcp.tool()
+def plotter_ink_pages() -> dict:
+    """List stored pages downloaded from Wacom device."""
+    return _api("GET", "/api/ink/pages")
+
+
 # ── Settings ────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -298,6 +409,23 @@ def plotter_get_settings(tool: str) -> dict:
 def plotter_list_profiles() -> dict:
     """List available tool profiles."""
     return _api("GET", "/api/profiles")
+
+
+@mcp.tool()
+def plotter_update_settings(tool: str, settings: dict) -> dict:
+    """Update tool profile settings (movement, water, fill parameters).
+
+    Args:
+        tool: Tool profile name (pencil, pen, watercolor)
+        settings: Dict with sections to update, e.g. {"movement": {"draw_speed": 1000}, "water": {"enabled": true}}
+    """
+    return _api("POST", f"/api/settings/{tool}", json=settings)
+
+
+@mcp.tool()
+def plotter_cleanup() -> dict:
+    """Delete all generated files in output/ and clear in-memory stores."""
+    return _api("POST", "/api/cleanup")
 
 
 @mcp.tool()
