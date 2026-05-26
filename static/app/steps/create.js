@@ -6,6 +6,7 @@ import { initTestPatterns } from '../creators/test-patterns.js';
 import { initToonTracer } from '../creators/toon-tracer.js';
 import { initInkDrawing } from '../creators/ink-drawing.js';
 import { initScriptorium } from '../creators/scriptorium.js';
+import { initMangaTools } from '../creators/manga-tools.js';
 import { redrawCanvas } from '../components/canvas-preview.js';
 import { nextStep } from '../router.js';
 import { toast } from '../lib/toast.js';
@@ -17,6 +18,7 @@ export function initCreate() {
     initToonTracer();
     initInkDrawing();
     initScriptorium();
+    initMangaTools();
     initCanvasOverlays();
     initContinueButton();
 
@@ -32,7 +34,7 @@ export function initCreate() {
         }
         // Reset gcode state when new SVG loaded (needs re-convert)
         if (changed.currentSvgId !== undefined && changed.currentSvgId !== null) {
-            setState({ gcodeGenerated: false });
+            setState({ gcodeGenerated: false, twoPass: false, twoPassId2: null });
         }
     });
 }

@@ -104,6 +104,19 @@ class WaterConfig:
     pass2: Pass2Config = field(default_factory=Pass2Config)
 
 
+# Layer speed presets — used by manga generators to tag polylines by purpose.
+# Each layer maps to a draw speed (mm/min). These override the profile draw_speed
+# when polylines carry a layer tag. The G-code emitter switches F between groups.
+LAYER_SPEEDS = {
+    "border":   800,
+    "outline":  1000,
+    "detail":   1200,
+    "tone":     1800,
+    "effect":   2000,
+    "text":     1000,
+}
+
+
 @dataclass
 class FillConfig:
     enabled: bool = False

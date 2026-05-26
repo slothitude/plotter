@@ -13,6 +13,14 @@ mcp = FastMCP("plotter")
 BASE_URL = "http://localhost:5000"
 
 
+_CALIBRATION_MSG = (
+    "Calibration not confirmed. Before proceeding, verify:\n"
+    "1. The correct tool is physically loaded in the holder\n"
+    "2. Z calibration has been done for this specific tool\n"
+    "Set calibration_confirmed=True to proceed."
+)
+
+
 def _api(method: str, path: str, **kwargs):
     """Call Flask API and return parsed JSON."""
     url = f"{BASE_URL}{path}"
@@ -22,6 +30,13 @@ def _api(method: str, path: str, **kwargs):
         return r.json()
     except Exception:
         return {"status": r.text.strip()}
+
+
+def _need_calibration(confirmed: bool) -> Optional[dict]:
+    """Return error if calibration not confirmed."""
+    if not confirmed:
+        return {"error": _CALIBRATION_MSG}
+    return None
 
 
 # ── Core Control ────────────────────────────────────────────────────────────────
@@ -119,6 +134,7 @@ def plotter_convert(
     fill_type: Optional[str] = None,
     fill_spacing: Optional[float] = None,
     fill_angle: Optional[float] = None,
+    calibration_confirmed: bool = False,
 ) -> dict:
     """Convert an uploaded SVG to G-code with optional transforms.
 
@@ -136,7 +152,10 @@ def plotter_convert(
         fill_type: Fill pattern type (e.g. "hatch", "crosshatch")
         fill_spacing: Distance between fill lines (mm)
         fill_angle: Fill line angle in degrees
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     payload = {"id": file_id, "tool": tool}
     if scale is not None:
         payload["scale"] = scale
@@ -170,6 +189,7 @@ def plotter_test_pattern(
     tool: str = "pencil",
     page_width: Optional[float] = None,
     page_height: Optional[float] = None,
+    calibration_confirmed: bool = False,
 ) -> dict:
     """Generate a geometric test pattern for the plotter.
 
@@ -179,7 +199,10 @@ def plotter_test_pattern(
         tool: Tool profile name (pencil, pen, watercolor)
         page_width: Optional page width override (mm)
         page_height: Optional page height override (mm)
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     payload = {"pattern": pattern, "size": size, "tool": tool}
     if page_width is not None:
         payload["page_width"] = page_width
@@ -221,12 +244,15 @@ def plotter_trace_image(
 
 
 @mcp.tool()
-def plotter_print(file_id: str) -> dict:
+def plotter_print(file_id: str, calibration_confirmed: bool = False) -> dict:
     """Start printing a G-code file on the plotter.
 
     Args:
         file_id: G-code file ID from convert/test-pattern
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/print", json={"id": file_id})
 
 
@@ -243,7 +269,7 @@ def plotter_download_gcode(file_id: str) -> dict:
 
 
 @mcp.tool()
-def plotter_convert_pass2(file_id: str, tool: str = "watercolor") -> dict:
+def plotter_convert_pass2(file_id: str, tool: str = "watercolor", calibration_confirmed: bool = False) -> dict:
     """Regenerate watercolor pass 2 G-code with current calibration values.
 
     Call this after recalibrating the brush Z to regenerate pass 2 with updated heights.
@@ -251,17 +277,23 @@ def plotter_convert_pass2(file_id: str, tool: str = "watercolor") -> dict:
     Args:
         file_id: SVG file ID from a previous watercolor convert
         tool: Tool profile name (default: watercolor)
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/convert-pass2", json={"id": file_id, "tool": tool})
 
 
 @mcp.tool()
-def plotter_print_raw(gcode: str) -> dict:
+def plotter_print_raw(gcode: str, calibration_confirmed: bool = False) -> dict:
     """Send raw G-code string directly to the printer for immediate execution.
 
     Args:
         gcode: G-code string to send (newline-separated commands)
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/print-raw", json={"gcode": gcode})
 
 
@@ -304,23 +336,29 @@ def plotter_calibration_test_dot(tool: str = "pencil") -> dict:
 
 
 @mcp.tool()
-def plotter_mark_page(tool: str = "pencil") -> dict:
+def plotter_mark_page(tool: str = "pencil", calibration_confirmed: bool = False) -> dict:
     """Draw L-marks at the 4 corners of the page for alignment verification.
 
     Args:
         tool: Tool profile name for Z heights
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/mark-page", json={"tool": tool})
 
 
 @mcp.tool()
-def plotter_bed_level(action: str = "start", tool: str = "pencil") -> dict:
+def plotter_bed_level(action: str = "start", tool: str = "pencil", calibration_confirmed: bool = False) -> dict:
     """Bed leveling helper — move to corners to check bed level.
 
     Args:
         action: "start" to begin, "next" for next corner
         tool: Tool profile name for Z heights
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/bed-level", json={"action": action, "tool": tool})
 
 
@@ -338,12 +376,15 @@ def plotter_tool_change_park(action: str = "goto", tool: str = "watercolor") -> 
 # ── Live Plot / Capture ─────────────────────────────────────────────────────────
 
 @mcp.tool()
-def plotter_live_start(tool: str = "pencil") -> dict:
+def plotter_live_start(tool: str = "pencil", calibration_confirmed: bool = False) -> dict:
     """Start live plot mode — strokes from Wacom Slate go directly to plotter.
 
     Args:
         tool: Tool profile for live plotting (pencil, pen, watercolor)
+        calibration_confirmed: Must be True — confirms the correct tool is loaded and Z-calibrated
     """
+    if err := _need_calibration(calibration_confirmed):
+        return err
     return _api("POST", "/api/ink/live-start", json={"tool": tool})
 
 

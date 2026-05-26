@@ -1,4 +1,4 @@
-/* plot.js — Step 4: Print + Progress + Live Plot */
+/* plot.js — Step 4: Print + Progress + Live Plot + Watercolor Two-Pass */
 
 import { getState, setState, subscribe } from '../state.js';
 import { api, apiJSON, apiPost } from '../api.js';
@@ -9,6 +9,7 @@ export function initPlot() {
     initPrint();
     initLivePlot();
     initCanvasOverlays();
+    initWcWorkflow();
 
     subscribe('plot', (changed, state) => {
         if (changed.progress !== undefined) {
@@ -29,6 +30,9 @@ export function initPlot() {
         }
         if (changed.stats !== undefined && changed.stats) {
             updateStatsDisplay(changed.stats);
+        }
+        if (changed.twoPass !== undefined || changed.wcStep !== undefined) {
+            updateWcWorkflow(state);
         }
     });
 }
@@ -56,10 +60,15 @@ function startPrint() {
 }
 
 function stopPrint() {
+    const s = getState();
     api('/api/stop', { method: 'POST' }).then(() => {
         toast('Plotting stopped', 'warn');
         setState({ busy: false });
         updateBusyState(false);
+        // Reset watercolor workflow to step 1 if active
+        if (s.twoPass && s.wcStep > 0 && s.wcStep < 4) {
+            setState({ wcStep: 1 });
+        }
     });
 }
 
@@ -72,17 +81,32 @@ function updateProgress(progress) {
     if (text) text.textContent = `${progress.completed}/${progress.total} lines${progress.info ? ' \u2014 ' + progress.info : ''}`;
 
     if (progress.completed >= progress.total && progress.total > 0) {
-        toast('Plotting complete', 'success');
-        setState({ busy: false });
+        const s = getState();
+        if (s.twoPass && s.wcStep === 1) {
+            toast('Pass 1 done \u2014 swap tools and recalibrate', 'success');
+            setState({ busy: false, wcStep: 2 });
+        } else if (s.twoPass && s.wcStep === 3) {
+            toast('Painting complete!', 'success');
+            setState({ busy: false, wcStep: 4 });
+        } else {
+            toast('Plotting complete', 'success');
+            setState({ busy: false });
+        }
         updateBusyState(false);
     }
 }
 
 function updateBusyState(busy) {
+    const s = getState();
     const btnPrint = document.getElementById('btn-print');
     const btnStop = document.getElementById('btn-print-stop');
-    if (btnPrint) btnPrint.disabled = busy || !getState().gcodeGenerated;
+    const btnPass1 = document.getElementById('btn-wc-pass1');
+    const btnPass2 = document.getElementById('btn-wc-pass2');
+
+    if (btnPrint) btnPrint.disabled = busy || !s.gcodeGenerated;
     if (btnStop) btnStop.disabled = !busy;
+    if (btnPass1) btnPass1.disabled = busy;
+    if (btnPass2) btnPass2.disabled = busy;
 }
 
 function updatePrintButton(state) {
@@ -90,6 +114,100 @@ function updatePrintButton(state) {
     if (!btn) return;
     btn.disabled = !state.gcodeGenerated || !state.currentSvgId || state.busy;
     if (state.stats) updateStatsDisplay(state.stats);
+}
+
+// ── Watercolor Two-Pass Workflow ──
+function initWcWorkflow() {
+    document.getElementById('btn-wc-pass1')?.addEventListener('click', wcPass1);
+    document.getElementById('btn-wc-swap-done')?.addEventListener('click', () => {
+        setState({ wcStep: 3 });
+        toast('Ready for pass 2', 'info');
+    });
+    document.getElementById('btn-wc-pass2')?.addEventListener('click', wcPass2);
+
+    const s = getState();
+    // Auto-start workflow if entering Plot step with two-pass active
+    if (s.twoPass && s.wcStep === 0) {
+        setState({ wcStep: 1 });
+    }
+    updateWcWorkflow(s);
+}
+
+function updateWcWorkflow(state) {
+    const btnPrint = document.getElementById('btn-print');
+    const workflow = document.getElementById('wc-workflow');
+    const step1 = document.getElementById('wc-step-1');
+    const step2 = document.getElementById('wc-step-2');
+    const step3 = document.getElementById('wc-step-3');
+
+    if (!workflow) return;
+
+    if (!state.twoPass) {
+        // Normal mode — hide workflow, show normal print button
+        workflow.classList.add('hidden');
+        if (btnPrint) btnPrint.classList.remove('hidden');
+        return;
+    }
+
+    // Two-pass mode — hide normal print button, show workflow
+    workflow.classList.remove('hidden');
+    if (btnPrint) btnPrint.classList.add('hidden');
+
+    const step = state.wcStep;
+
+    // Step 1
+    step1.classList.toggle('hidden', step < 1 || step > 4);
+    step1.classList.toggle('wc-active', step === 1);
+    step1.classList.toggle('wc-done', step > 1);
+    step1.classList.toggle('wc-pending', step < 1);
+
+    // Step 2
+    step2.classList.toggle('hidden', step < 2 || step > 4);
+    step2.classList.toggle('wc-active', step === 2);
+    step2.classList.toggle('wc-done', step > 2);
+    step2.classList.toggle('wc-pending', step < 2);
+
+    // Step 3
+    step3.classList.toggle('hidden', step < 3 || step > 4);
+    step3.classList.toggle('wc-active', step === 3);
+    step3.classList.toggle('wc-done', step > 3);
+    step3.classList.toggle('wc-pending', step < 3);
+}
+
+function wcPass1() {
+    const s = getState();
+    if (!s.connected) return toast('Connect printer first', 'warn');
+
+    apiPost('/api/print', { id: s.currentSvgId })
+        .then(data => {
+            if (data.error) return toast(data.error, 'error');
+            toast('Pass 1 plotting started (pencil guide)', 'success');
+            setState({ busy: true });
+            updateBusyState(true);
+        })
+        .catch(() => toast('Print failed', 'error'));
+}
+
+function wcPass2() {
+    const s = getState();
+    if (!s.connected) return toast('Connect printer first', 'warn');
+
+    // Regenerate pass 2 with current calibration, then print
+    toast('Regenerating pass 2 with current calibration...', 'info');
+    apiPost('/api/convert-pass2', { id: s.currentSvgId, tool: s.tool })
+        .then(data => {
+            if (data.error) return toast(data.error, 'error');
+
+            // Print the regenerated pass 2
+            return apiPost('/api/print', { id: data.id })
+                .then(printData => {
+                    if (printData.error) return toast(printData.error, 'error');
+                    toast('Pass 2 plotting started (wet brush)', 'success');
+                    setState({ busy: true });
+                    updateBusyState(true);
+                });
+        })
+        .catch(() => toast('Pass 2 failed', 'error'));
 }
 
 // ── Live Plot ──

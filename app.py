@@ -25,6 +25,7 @@ from flask_sock import Sock
 
 import config
 import gcode
+import manga
 import serial_conn
 
 app = Flask(__name__, static_folder="static")
@@ -38,14 +39,6 @@ SERIAL_PORT_FILE = Path(__file__).parent / "serial_port.txt"
 def _ensure_connected():
     """Auto-connect to the saved serial port if not already connected."""
     if serial.is_connected:
-        # Runtime guard: (0,0,0) means position lost — re-home immediately
-        try:
-            pos = serial.get_position()
-            if pos.get("X") == 0 and pos.get("Y") == 0 and pos.get("Z") == 0:
-                print("WARNING: Marlin reports (0,0,0) — position lost, re-homing")
-                _raise_to_safe()
-        except Exception:
-            pass
         return True
     port = SERIAL_PORT_FILE.read_text().strip() if SERIAL_PORT_FILE.exists() else None
     if not port:
@@ -218,6 +211,7 @@ def _broadcast_progress(completed, total, info):
         "completed": completed,
         "total": total,
         "info": info,
+        "stats": serial.last_print_stats,
     })
     for ws in ws_clients[:]:
         try:
@@ -313,6 +307,7 @@ def get_status():
         "busy": serial._sending or serial._live_sending,
         "live_plot": _live_plot_active,
         "position": pos,
+        "last_print": serial.last_print_stats,
     })
 
 
@@ -399,7 +394,7 @@ def convert_svg():
     try:
         two_pass = False
         id_pass2 = None
-        if file_id in uploaded_svgs:
+        if file_id in uploaded_svgs and uploaded_svgs[file_id] is not None:
             gc, polylines, toolpath, stats, meta = gcode.svg_to_gcode(
                 uploaded_svgs[file_id], tool_name, **transform_kwargs
             )
@@ -447,6 +442,7 @@ def convert_svg():
                 **transform_kwargs,
                 "simplify": True,
                 "simplify_tolerance": 0.3,
+                "no_fit": True,
                 "user_rotate": -transform_kwargs.get("user_rotate", 0.0),
                 "user_scale": transform_kwargs.get("user_scale", 1.0),
             }
@@ -2212,6 +2208,93 @@ def shutdown():
     else:
         os._exit(0)
     return jsonify({"ok": True})
+
+
+# ── Manga Toolkit ────────────────────────────────────────────────────
+
+@app.route("/api/manga/generate", methods=["POST"])
+def manga_generate():
+    """Unified manga generation endpoint.
+
+    Dispatches by 'action' field:
+      compile-page  — full manga_page.json → all polylines, layered
+      panels        — page dims + preset → panel border polylines
+      speed-lines   — bounds, origin, count → speed line polylines
+      tone          — polygon, style, density → tone fill polylines
+      bubble        — position, text, shape → bubble + text polylines
+      effect        — name + params → effect polylines
+      sfx           — text, size, angle → SFX lettering
+      detect-panels — slate stroke data → detected panel bounds
+      presets       — list available layout presets
+    """
+    data = request.get_json(force=True)
+    action = data.get("action", "")
+
+    try:
+        if action == "compile-page":
+            polylines = manga.compile_page(data.get("page", {}))
+        elif action == "panels":
+            polylines = manga.generate_panels(data)
+        elif action == "panels-preset":
+            preset = data.get("preset", "4-grid")
+            pw = data.get("page_width", 180)
+            ph = data.get("page_height", 175)
+            bleed = data.get("bleed", 3)
+            panels = manga.apply_preset(preset, pw, ph, bleed)
+            return jsonify({"ok": True, "panels": panels})
+        elif action == "speed-lines":
+            polylines = manga.generate_speed_lines(data)
+        elif action == "tone":
+            polylines = manga.generate_tone(data)
+        elif action == "bubble":
+            polylines = manga.generate_bubble(data)
+        elif action == "effect":
+            name = data.get("name", "")
+            if name == "impact_burst":
+                polylines = manga.generate_impact_burst(data)
+            elif name == "rain":
+                polylines = manga.generate_rain(data)
+            elif name == "emotion":
+                polylines = manga.generate_emotion_lines(data)
+            else:
+                return jsonify({"ok": False, "error": f"Unknown effect: {name}"}), 400
+        elif action == "sfx":
+            polylines = manga.generate_sfx(data)
+        elif action == "detect-panels":
+            strokes = data.get("strokes", [])
+            pw = data.get("page_width", 180)
+            ph = data.get("page_height", 175)
+            panels = manga.detect_panels(strokes, pw, ph)
+            return jsonify({"ok": True, "panels": panels})
+        elif action == "presets":
+            return jsonify({"ok": True, "presets": list(manga.PANEL_PRESETS.keys())})
+        else:
+            return jsonify({"ok": False, "error": f"Unknown action: {action}"}), 400
+
+        # Convert polylines to JSON-serializable format
+        pl_data = []
+        for pl in polylines:
+            pl_data.append({
+                "points": pl.points,
+                "layer": pl.layer,
+                "color": pl.color,
+            })
+
+        # Store in uploaded_svgs for the standard convert/print pipeline
+        svg_id = f"manga-{uuid.uuid4().hex[:8]}"
+        # Save as text polylines (bypass SVG) — store Polyline objects directly
+        text_polylines[svg_id] = polylines
+        uploaded_svgs[svg_id] = None  # no SVG file for manga
+
+        return jsonify({
+            "ok": True,
+            "svg_id": svg_id,
+            "polylines": pl_data,
+            "stroke_count": len(polylines),
+        })
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":

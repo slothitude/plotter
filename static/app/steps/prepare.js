@@ -81,7 +81,8 @@ function initTransforms() {
 
 function updateTransform(key, value) {
     const t = { ...getState().transform, [key]: value };
-    setState({ transform: t, gcodeGenerated: false, toolpath: [] });
+    setState({ transform: t, gcodeGenerated: false, toolpath: [], twoPass: false, twoPassId2: null });
+    document.getElementById('wc-twopass-badge')?.classList.add('hidden');
     // Re-enable convert button
     document.getElementById('btn-convert').disabled = false;
     document.getElementById('btn-download-gcode').disabled = true;
@@ -132,7 +133,12 @@ function convertSvg() {
             gcodeLineCount: data.line_count || 0,
             toolpath: data.toolpath || s.toolpath,
             stats: data.stats || null,
+            twoPass: !!data.two_pass,
+            twoPassId2: data.id_pass2 || null,
         });
+
+        // Toggle two-pass badge
+        document.getElementById('wc-twopass-badge')?.classList.toggle('hidden', !data.two_pass);
 
         // Update UI elements
         document.getElementById('btn-convert').disabled = true;

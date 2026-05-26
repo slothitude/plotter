@@ -1,5 +1,6 @@
 """Pen Plotter — PySerial wrapper for printer communication."""
 
+import math
 import threading
 import time
 from collections import deque
@@ -28,6 +29,12 @@ class SerialConnection:
         self._stroke_queue: deque[str] = deque()
         self._live_sending = False
         self._live_thread: Optional[threading.Thread] = None
+        # Print stats
+        self._print_start_time: Optional[float] = None
+        self._pen_down: bool = False
+        self._pen_down_dist: float = 0.0
+        self._last_xy: Optional[tuple[float, float]] = None
+        self.last_print_stats: Optional[dict] = None
 
     # ── Connection ──────────────────────────────────────────────────
 
@@ -165,8 +172,28 @@ class SerialConnection:
         self._current_file = filename
         self._progress_callback = progress_callback
         self._sending = True
+        self._print_start_time = time.time()
+        self._pen_down = False
+        self._pen_down_dist = 0.0
+        self._last_xy = None
         self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
         self._sender_thread.start()
+
+    @staticmethod
+    def _parse_g1_xy(cmd: str) -> Optional[tuple[float, float]]:
+        """Extract X,Y target from a G0/G1 command. Returns None if no XY."""
+        parts = cmd.upper().split()
+        x = y = None
+        for p in parts:
+            if p.startswith('X'):
+                try: x = float(p[1:])
+                except ValueError: pass
+            elif p.startswith('Y'):
+                try: y = float(p[1:])
+                except ValueError: pass
+        if x is not None and y is not None:
+            return (x, y)
+        return None
 
     def _send_loop(self):
         try:
@@ -175,6 +202,30 @@ class SerialConnection:
                 if cmd.startswith(";") or not cmd:
                     self._completed_commands += 1
                     continue
+
+                # Track pen state and accumulate drawing distance
+                upper = cmd.upper().split(";")[0].strip()
+                if upper.startswith("G1") and "Z" in upper and "X" not in upper:
+                    # Z-only move — check if pen going down or up
+                    for p in upper.split():
+                        if p.startswith("Z"):
+                            try:
+                                z = float(p[1:])
+                                # Heuristic: if Z < 20, pen is going down; else up
+                                self._pen_down = z < 20
+                                if self._pen_down:
+                                    self._last_xy = None  # reset on pen down
+                            except ValueError:
+                                pass
+                elif self._pen_down and (upper.startswith("G1") and "X" in upper):
+                    xy = self._parse_g1_xy(upper)
+                    if xy:
+                        if self._last_xy is not None:
+                            dx = xy[0] - self._last_xy[0]
+                            dy = xy[1] - self._last_xy[1]
+                            self._pen_down_dist += math.sqrt(dx*dx + dy*dy)
+                        self._last_xy = xy
+
                 try:
                     with self._lock:
                         self._serial.write((cmd + "\n").encode())
@@ -206,6 +257,16 @@ class SerialConnection:
                 self._progress_callback(-1, self._total_commands, str(e))
         finally:
             self._sending = False
+            # Store print stats
+            if self._print_start_time:
+                elapsed = time.time() - self._print_start_time
+                self.last_print_stats = {
+                    "duration_s": round(elapsed, 1),
+                    "pen_down_m": round(self._pen_down_dist / 1000, 2),
+                    "total_commands": self._completed_commands,
+                    "file": self._current_file,
+                }
+                print(f"  Print done: {elapsed:.1f}s, {self._pen_down_dist/1000:.2f}m drawn, {self._completed_commands} commands", flush=True)
             # Park after plot finishes or is stopped
             if not self._stop_requested:
                 try:

@@ -168,6 +168,7 @@
                             <div class="sub-tab" data-tab="trace">Trace</div>
                             <div class="sub-tab" data-tab="draw">Draw</div>
                             <div class="sub-tab" data-tab="write">Write</div>
+                            <div class="sub-tab" data-tab="manga">Manga</div>
                         </div>
                         <div class="split-layout">
                             <div class="split-canvas">
@@ -204,6 +205,7 @@
                                     </div>
                                     <div class="test-grid" id="test-patterns-grid">
                                         <button class="btn btn-outline btn-sm" data-pattern="grid">Grid</button>
+                                        <button class="btn btn-outline btn-sm" data-pattern="square">Square</button>
                                         <button class="btn btn-outline btn-sm" data-pattern="circles">Circles</button>
                                         <button class="btn btn-outline btn-sm" data-pattern="crosshatch">Crosshatch</button>
                                         <button class="btn btn-outline btn-sm" data-pattern="star">Star</button>
@@ -298,6 +300,130 @@
                                     <button id="btn-script-generate" class="btn btn-primary btn-sm mt-md">Generate</button>
                                 </div>
 
+                                <!-- Manga sub-panel -->
+                                <div id="tab-manga" class="sub-panel">
+                                    <div class="card-title">Panel Layout</div>
+                                    <div class="manga-presets">
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="2-row">2 Row</button>
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="3-panel">3 Panel</button>
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="4-grid">4 Grid</button>
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="2-3">2+3</button>
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="L-shape">L-Shape</button>
+                                        <button class="btn btn-outline btn-sm manga-preset-btn" data-preset="manga-1">Manga 1</button>
+                                    </div>
+                                    <div class="form-row mt-md">
+                                        <label class="form-label">Panel</label>
+                                        <select id="manga-panel-select" class="input-select" style="flex:1">
+                                            <option value="-1">-- Select Panel --</option>
+                                        </select>
+                                    </div>
+                                    <div id="manga-panel-info" style="font-size:10px;color:var(--text-2);margin-bottom:8px">No panel selected</div>
+
+                                    <div class="card-title mt-md">Speed Lines</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Style</label>
+                                        <select id="manga-speed-style" class="input-select">
+                                            <option value="radial">Radial</option>
+                                            <option value="parallel">Parallel</option>
+                                            <option value="focus">Focus</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Origin X</label>
+                                        <input type="number" id="manga-speed-ox" class="input-field" value="50">
+                                        <label class="form-label" style="margin-left:8px">Y</label>
+                                        <input type="number" id="manga-speed-oy" class="input-field" value="50">
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Count</label>
+                                        <input type="number" id="manga-speed-count" class="input-field" value="20">
+                                    </div>
+                                    <button id="btn-manga-add-speed" class="btn btn-outline btn-sm">Add Speed Lines</button>
+
+                                    <div class="card-title mt-md">Screen Tone</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Style</label>
+                                        <select id="manga-tone-style" class="input-select">
+                                            <option value="dot">Dot</option>
+                                            <option value="line">Line</option>
+                                            <option value="gradient">Gradient</option>
+                                            <option value="crosshatch">Crosshatch</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Density</label>
+                                        <input type="number" id="manga-tone-density" class="input-field" value="40">
+                                        <span class="unit">LPI</span>
+                                    </div>
+                                    <button id="btn-manga-add-tone" class="btn btn-outline btn-sm">Add Tone</button>
+
+                                    <div class="card-title mt-md">Speech Bubble</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Text</label>
+                                        <input type="text" id="manga-bubble-text" class="input-field" value="Hello!" style="width:120px">
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Shape</label>
+                                        <select id="manga-bubble-shape" class="input-select">
+                                            <option value="ellipse">Ellipse</option>
+                                            <option value="rounded-rect">Rounded Rect</option>
+                                            <option value="jagged">Jagged</option>
+                                            <option value="whisper">Whisper</option>
+                                            <option value="thought">Thought</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Tail</label>
+                                        <select id="manga-bubble-tail" class="input-select">
+                                            <option value="">None</option>
+                                            <option value="bottom">Bottom</option>
+                                            <option value="bottom-left" selected>Bottom Left</option>
+                                            <option value="bottom-right">Bottom Right</option>
+                                            <option value="top">Top</option>
+                                            <option value="left">Left</option>
+                                            <option value="right">Right</option>
+                                        </select>
+                                    </div>
+                                    <button id="btn-manga-add-bubble" class="btn btn-outline btn-sm">Add Bubble</button>
+
+                                    <div class="card-title mt-md">Effects</div>
+                                    <div class="flex-row gap-sm">
+                                        <button id="btn-manga-add-burst" class="btn btn-outline btn-sm">Impact Burst</button>
+                                        <button id="btn-manga-add-rain" class="btn btn-outline btn-sm">Rain</button>
+                                    </div>
+
+                                    <div class="card-title mt-md">SFX Lettering</div>
+                                    <div class="form-row">
+                                        <label class="form-label">Text</label>
+                                        <input type="text" id="manga-sfx-text" class="input-field" value="BOOM" style="width:80px">
+                                    </div>
+                                    <div class="form-row">
+                                        <label class="form-label">Size</label>
+                                        <input type="number" id="manga-sfx-size" class="input-field" value="15">
+                                        <span class="unit">mm</span>
+                                        <label class="form-label" style="margin-left:8px">Angle</label>
+                                        <input type="number" id="manga-sfx-angle" class="input-field" value="0">
+                                        <span class="unit">deg</span>
+                                    </div>
+                                    <button id="btn-manga-add-sfx" class="btn btn-outline btn-sm">Add SFX</button>
+
+                                    <div class="card-title mt-md">Layers</div>
+                                    <div class="manga-layer-grid">
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="border" checked> Border</label>
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="outline" checked> Outline</label>
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="detail" checked> Detail</label>
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="tone" checked> Tone</label>
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="effect" checked> Effect</label>
+                                        <label class="check-label"><input type="checkbox" class="manga-layer-toggle" data-layer="text" checked> Text</label>
+                                    </div>
+
+                                    <div class="card-title mt-md">Actions</div>
+                                    <div class="flex-row gap-sm" style="flex-wrap:wrap">
+                                        <button id="btn-manga-generate" class="btn btn-primary btn-sm">Compile Page</button>
+                                        <button id="btn-manga-clear-panel" class="btn btn-outline btn-sm">Clear Panel</button>
+                                    </div>
+                                </div>
+
                                 <button class="btn btn-continue" id="btn-create-continue">Continue to Prepare &#8594;</button>
                             </div>
                         </div>
@@ -357,6 +483,7 @@
                                     <div class="card-title">Convert</div>
                                     <button id="btn-convert" class="btn btn-primary" disabled>Generate G-code</button>
                                     <div id="convert-stats" class="stats-row mt-md"></div>
+                                    <div id="wc-twopass-badge" class="wc-badge hidden">Two-Pass Watercolor</div>
                                 </div>
 
                                 <div class="card">
@@ -387,6 +514,44 @@
                                     <div class="flex-row gap-sm">
                                         <button id="btn-print" class="btn btn-primary" disabled>Start Plot</button>
                                         <button id="btn-print-stop" class="btn btn-estop btn-sm" disabled>Stop</button>
+                                    </div>
+                                    <div id="wc-workflow" class="wc-workflow hidden">
+                                        <div id="wc-step-1" class="wc-step">
+                                            <div class="wc-header">
+                                                <span class="wc-num">1</span>
+                                                <span class="wc-title">Pencil guide</span>
+                                            </div>
+                                            <div class="wc-body">
+                                                <div class="wc-desc">Load pencil, calibrate Z, print dry guide layer</div>
+                                                <div class="wc-actions">
+                                                    <button id="btn-wc-pass1" class="btn btn-primary btn-sm">Print Pass 1</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="wc-step-2" class="wc-step hidden">
+                                            <div class="wc-header">
+                                                <span class="wc-num">2</span>
+                                                <span class="wc-title">Swap &amp; Calibrate</span>
+                                            </div>
+                                            <div class="wc-body">
+                                                <div class="wc-desc">Swap pencil for brush, go to Setup and recalibrate Z</div>
+                                                <div class="wc-actions">
+                                                    <button id="btn-wc-swap-done" class="btn btn-warn btn-sm">Calibration Done</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="wc-step-3" class="wc-step hidden">
+                                            <div class="wc-header">
+                                                <span class="wc-num">3</span>
+                                                <span class="wc-title">Wet brush</span>
+                                            </div>
+                                            <div class="wc-body">
+                                                <div class="wc-desc">Regenerate pass 2 with new Z, retrace with wet brush</div>
+                                                <div class="wc-actions">
+                                                    <button id="btn-wc-pass2" class="btn btn-primary btn-sm">Print Pass 2</button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div class="progress-container mt-md">
                                         <div class="progress-bar"><div class="progress-fill" id="plot-progress-fill" style="width:0%"></div></div>

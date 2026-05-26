@@ -29,7 +29,7 @@ MIN_MOVE_DIST = 0.2  # mm — skip sub-threshold micro-moves
 class Polyline:
     """A series of connected (x, y) points forming a stroke."""
     points: list[tuple[float, float]]
-    layer: int = 0
+    layer: str = ""     # layer name for speed grouping (border/outline/detail/tone/effect/text), "" = default
     color: str = "#00e87b"
 
 
@@ -841,12 +841,31 @@ def polylines_to_gcode(
     segment_count = 0
     prev_pos = (0.0, 0.0)
     cumulative_draw_dist = 0.0
+    current_layer = None  # track layer for speed switching
+
+    # Sort polylines into layer groups for efficient speed switching
+    # Layer order: border → outline → detail → tone → effect → text → (untagged)
+    _layer_order = ["border", "outline", "detail", "tone", "effect", "text", ""]
+    tagged = [(pl, _layer_order.index(pl.layer) if pl.layer in _layer_order else len(_layer_order)) for pl in polylines]
+    tagged.sort(key=lambda x: x[1])
+    polylines = [pl for pl, _ in tagged]
 
     for pl_idx, polyline in enumerate(polylines):
         if len(polyline.points) < 2:
             continue
 
+        # Layer speed switching
+        pl_layer = polyline.layer or ""
+        if pl_layer != current_layer:
+            current_layer = pl_layer
+            layer_speed = config.LAYER_SPEEDS.get(pl_layer, mv.draw_speed)
+            if pl_layer:
+                lines.append(f"; --- Layer: {pl_layer} ({layer_speed:.0f} mm/min) ---")
+
         lines.append(f"; Stroke {pl_idx + 1}")
+
+        # Resolve draw speed for this layer
+        draw_speed = config.LAYER_SPEEDS.get(pl_layer, mv.draw_speed)
 
         # Water dip check
         if wt.enabled and segment_count > 0 and segment_count % wt.dip_interval == 0:
@@ -858,7 +877,7 @@ def polylines_to_gcode(
 
         # Record travel move in toolpath
         travel_pts = [[round(prev_pos[0], 2), round(prev_pos[1], 2)], [sx, sy]]
-        toolpath.append({"type": "travel", "points": travel_pts, "layer": polyline.layer})
+        toolpath.append({"type": "travel", "points": travel_pts, "layer": pl_layer})
         prev_pos = (sx, sy)
 
         # Pen down — with wear compensation
@@ -885,14 +904,14 @@ def polylines_to_gcode(
                 if mv.max_wear_depth > 0:
                     wear = min(wear, mv.max_wear_depth)
                 seg_z = ht.pen_down_z - wear
-                lines.append(f"G1 X{px:.3f} Y{py:.3f} Z{seg_z:.3f} F{mv.draw_speed:.0f}")
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} Z{seg_z:.3f} F{draw_speed:.0f}")
             else:
-                lines.append(f"G1 X{px:.3f} Y{py:.3f} F{mv.draw_speed:.0f}")
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
             draw_pts.append([px, py])
             segment_count += 1
             prev_pos = (px, py)
 
-        toolpath.append({"type": "draw", "points": draw_pts, "layer": polyline.layer})
+        toolpath.append({"type": "draw", "points": draw_pts, "layer": pl_layer})
 
         # Pen up to lift height
         lines.append(f"G1 Z{pen_lift_z:.3f} F{mv.travel_speed:.0f} ; Pen up")
@@ -949,7 +968,7 @@ def svg_to_gcode(svg_path: str, tool_name: str, **kwargs) -> tuple[str, list[Pol
         if seg["type"] == "draw" and len(seg["points"]) >= 2:
             preview_polylines.append(Polyline(
                 points=[tuple(p) for p in seg["points"]],
-                layer=seg.get("layer", 0),
+                layer=seg.get("layer", ""),
             ))
 
     stats = compute_stats(

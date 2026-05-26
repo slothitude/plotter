@@ -59,6 +59,13 @@ const state = {
 
     // Jog
     jogStep: 10,
+
+    // Watercolor workflow step (0=off, 1-5=active, 6=done)
+    wcStep: 0,
+
+    // Two-pass watercolor state
+    twoPass: false,
+    twoPassId2: null,
 };
 
 const listeners = new Map();
