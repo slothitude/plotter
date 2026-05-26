@@ -38,6 +38,14 @@ SERIAL_PORT_FILE = Path(__file__).parent / "serial_port.txt"
 def _ensure_connected():
     """Auto-connect to the saved serial port if not already connected."""
     if serial.is_connected:
+        # Runtime guard: (0,0,0) means position lost — re-home immediately
+        try:
+            pos = serial.get_position()
+            if pos.get("X") == 0 and pos.get("Y") == 0 and pos.get("Z") == 0:
+                print("WARNING: Marlin reports (0,0,0) — position lost, re-homing")
+                _raise_to_safe()
+        except Exception:
+            pass
         return True
     port = SERIAL_PORT_FILE.read_text().strip() if SERIAL_PORT_FILE.exists() else None
     if not port:
@@ -54,25 +62,29 @@ def _ensure_connected():
         except Exception:
             return False
     return False
-def _raise_to_safe():
-    """Ensure Z is at SAFE_Z (30). Queries position first; homes if unknown.
 
-    SAFETY RULE: If X < 30, Z MUST be ≥ 30. The water cup is at X=0.
-    Only exception is the dip sequence (handled in gcode.py).
-    This function always raises to SAFE_Z, satisfying the rule for all callers.
+
+def _raise_to_safe():
+    """MANDATORY after any (re)connect: raise Z to SAFE_Z, then home.
+
+    After E-stop, M999, or Flask restart, Marlin's reported position may
+    not match physical reality. We MUST raise Z FIRST (so the pen clears
+    the bed/paper) and THEN home — homing while pen is down would drag it.
+
+    Sequence: raise Z → G28 → raise Z again (G28 may leave Z at max)
     """
     if not serial.is_connected:
         return None
-    pos = serial.get_position()
-    if not pos or "Z" not in pos:
-        serial.send_command("G28")
-        time.sleep(12)
-        pos = serial.get_position()
-        if not pos or "Z" not in pos:
-            return None
-    serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000 ; raise to safe height")
+    # Step 1: RAISE FIRST — get pen clear of bed before any other moves
+    serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")
+    time.sleep(2)
+    # Step 2: HOME — establishes known physical position
+    serial.send_command("G28")
+    time.sleep(12)
+    # Step 3: Raise to exact SAFE_Z (G28 may leave Z higher)
+    serial.send_command(f"G1 Z{config.SAFE_Z:.3f} F3000")
     time.sleep(1)
-    return pos
+    return serial.get_position()
 
 
 uploaded_svgs: dict[str, str] = {}  # id -> file path
