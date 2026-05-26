@@ -1,56 +1,27 @@
 # Pen Plotter — Implementation TODO
 
-## Stage 1: Pencil (Foundation)
+## Stage 1: Pencil (Foundation) ✅ DONE
 
-- [ ] `config.py` — Printer & tool profile system
-  - [ ] Bed size defaults (220x220)
-  - [ ] TOML profile loader
-  - [ ] Calibration data (calibration.json) read/write
-  - [ ] Profile CRUD (load, save, list)
-- [ ] `profiles/pencil.toml` — Pencil tool settings
-- [ ] `profiles/pen.toml` — Pen tool settings
-- [ ] `profiles/watercolor.toml` — Watercolor tool settings
-- [ ] `gcode.py` — SVG → G-code engine
-  - [ ] SVG parsing (paths, lines, rects, circles, polylines)
-  - [ ] Bezier flattening to polylines
-  - [ ] G-code generation with calibrated Z values
-  - [ ] Nearest-neighbor path optimization
-  - [ ] Water dip sequence insertion (Stage 3)
-- [ ] `serial_conn.py` — PySerial wrapper
-  - [ ] Connect/disconnect
-  - [ ] Line-by-line send with `ok` flow control
-  - [ ] Command queue with progress tracking
-  - [ ] Emergency stop (M112)
-  - [ ] Position reporting (M114)
-- [ ] `app.py` — Flask server
-  - [ ] SVG upload endpoint
-  - [ ] SVG → G-code conversion endpoint
-  - [ ] Calibration API (get, save, step, test-dot)
-  - [ ] Settings API (get/save per tool)
-  - [ ] Serial connect/disconnect
-  - [ ] Jog controls
-  - [ ] Print / Stop commands
-  - [ ] Status endpoint
-  - [ ] WebSocket for real-time progress
-- [ ] `static/index.html` — Web UI structure
-- [ ] `static/style.css` — Styling
-- [ ] `static/app.js` — Frontend logic
-  - [ ] Calibration tab (Z jog, test dot, save)
-  - [ ] SVG upload & preview (canvas rendering)
-  - [ ] Settings panel (per-tool, editable)
-  - [ ] Printer controls (connect, home, jog, start, stop)
-  - [ ] Progress bar
-- [ ] `requirements.txt` — Dependencies
-- [ ] Test: Flask app starts
-- [ ] Test: SVG upload → G-code generation
-- [ ] Test: Connect to printer, jog controls
+## Stage 2: Pen (Servo Upgrade) ✅ DONE
 
-## Stage 2: Pen (Servo Upgrade)
-- [ ] Servo M280 commands in G-code engine
-- [ ] Pen pressure calibration wizard
-- [ ] Multi-pass drawing support
+## Stage 3: Watercolor + Auto Water Dip ✅ DONE
 
-## Stage 3: Watercolor + Auto Water Dip
-- [ ] Auto-dip sequence in G-code engine
-- [ ] Multi-layer / color separation workflow
-- [ ] Brush tool profile with blotting
+## Manga Plotter Toolkit
+
+- [x] Core generators (panels, tone, bubbles, SFX, speed lines, effects)
+- [x] Layer system with per-layer feed rates (border→outline→detail→tone→effect→text)
+- [x] Panel presets (2-row, 3-panel, 4-grid, 2-3, L-shape, manga-1)
+- [x] Dot tone with vectorized point-in-polygon + boustrophedon sort
+- [x] Speech bubble shapes (round, oval, square, cloud, thought, shout) + tails
+- [x] SFX lettering with rotation
+- [x] Gradient tone generation
+- [x] Line tone and crosshatch tone
+- [x] Frontend manga-tools.js UI
+- [x] API dispatch endpoint `POST /api/manga/generate`
+- [x] Pipeline: compile → text_polylines → convert → G-code
+- [x] Test panel detection with realistic strokes (8/8 tests: clean, wobbly, multi-stroke merging, close/far panels, degenerate, clamping, min-size)
+- [x] Test compile-page flow (multi-layer: border + tone + effect + text)
+- [x] Integration test: multi-layer page via compile_page (2 panels, speed lines, bubble, dot tone, SFX)
+- [x] Edge case: empty/zero-area panels (empty page, no children, zero-area polygon, <3 points)
+- [x] Edge case: tone on tiny region (1mm² → 4 dots, no crash)
+- [x] Fix: compile_page now converts tone `bounds` to `polygon` when missing (falls back to panel bounds)
