@@ -246,6 +246,7 @@ def generate_impact_burst(params: dict) -> list[gcode.Polyline]:
     irregularity = params.get("irregularity", 0.3)
 
     pts = []
+    n_points = max(n_points, 3)
     for i in range(n_points * 2):
         angle = math.pi * i / n_points
         r = radius * (1 + random.uniform(-irregularity, irregularity))
@@ -265,10 +266,10 @@ def generate_rain(params: dict) -> list[gcode.Polyline]:
     bw, bh = x1 - x0, y1 - y0
     rad = math.radians(angle)
     cos_a, sin_a = math.cos(rad), math.sin(rad)
-    length = random.uniform(8, 18)
     polylines = []
 
     for _ in range(density):
+        length = random.uniform(8, 18)
         sx = random.uniform(x0, x1)
         sy = random.uniform(y0, y1)
         ex = sx + cos_a * length
@@ -370,22 +371,8 @@ def generate_dot_tone(polygon, lpi=40, dot_size=0.4):
     if len(ix) == 0:
         return []
 
-    # Boustrophedon sort: sort by row (y), alternate direction per row
-    row_indices = np.round((iy - min_y) / spacing).astype(int)
-    order = np.lexsort((ix, row_indices))  # sort by y, then x
-
-    # Flip every other row for snake traversal
-    rows_unique = np.unique(row_indices)
-    final_order = []
-    for row in rows_unique:
-        mask = row_indices[order] == row
-        row_pos = np.where(mask)[0]
-        if len(row_pos) == 0:
-            continue
-        row_ixs = order[row_pos]
-        if row % 2 == 1:
-            row_ixs = row_ixs[::-1]
-        final_order.extend(row_ixs.tolist())
+    # Boustrophedon sort
+    final_order = _boustrophedon_sort(ix, iy, min_y, spacing)
 
     # Generate tiny circle polylines for each dot
     polylines = []
@@ -431,23 +418,13 @@ def generate_gradient_tone(polygon, lpi=30, dot_size_start=0.2, dot_size_end=0.8
         return []
 
     # Sort boustrophedon
-    row_indices = np.round((iy - min_y) / spacing).astype(int)
-    order = np.lexsort((ix, row_indices))
-    rows_unique = np.unique(row_indices)
-    final_order = []
-    for row in rows_unique:
-        mask = row_indices[order] == row
-        row_pos = np.where(mask)[0]
-        if len(row_pos) == 0:
-            continue
-        row_ixs = order[row_pos]
-        if row % 2 == 1:
-            row_ixs = row_ixs[::-1]
-        final_order.extend(row_ixs.tolist())
+    final_order = _boustrophedon_sort(ix, iy, min_y, spacing)
 
     polylines = []
     n_circle = 6
     circle_angles = [2 * math.pi * i / n_circle for i in range(n_circle + 1)]
+    cos_a = [math.cos(a) for a in circle_angles]
+    sin_a = [math.sin(a) for a in circle_angles]
 
     for idx in final_order:
         cx, cy = float(ix[idx]), float(iy[idx])
@@ -464,26 +441,48 @@ def generate_gradient_tone(polygon, lpi=30, dot_size_start=0.2, dot_size_end=0.8
             t = 0.5
         dot_size = dot_size_start + t * (dot_size_end - dot_size_start)
 
-        pts = [(cx + dot_size * math.cos(a), cy + dot_size * math.sin(a)) for a in circle_angles]
+        pts = [(cx + dot_size * cos_a[i], cy + dot_size * sin_a[i]) for i in range(n_circle + 1)]
         polylines.append(gcode.Polyline(points=pts, layer=LAYER_TONE))
 
     return polylines
 
 
 def _points_in_polygon(px, py, polygon):
-    """Vectorised point-in-polygon test using cross-product method.
+    """Vectorised ray-casting point-in-polygon test.
 
-    Returns boolean array. Works for convex and simple concave polygons.
+    Returns boolean array. Works for arbitrary simple polygons (convex and concave).
+    Uses the even-odd rule: cast ray from each point, count edge crossings.
     """
     n = len(polygon)
-    inside = np.ones(len(px), dtype=bool)
+    inside = np.zeros(len(px), dtype=bool)
+    j = n - 1
     for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        # Cross product: (edge × point) >= 0 means point is on the left side
-        cross = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
-        inside &= (cross >= 0)
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        # Ray-casting: test if horizontal ray from point crosses this edge
+        intersect = ((yi > py) != (yj > py)) & \
+                    (px < (xj - xi) * (py - yi) / (yj - yi + 1e-15) + xi)
+        inside ^= intersect
+        j = i
     return inside
+
+
+def _boustrophedon_sort(ix, iy, min_y, spacing):
+    """Sort points in boustrophedon (snake) order by row."""
+    row_indices = np.round((iy - min_y) / spacing).astype(int)
+    order = np.lexsort((ix, row_indices))
+    rows_unique = np.unique(row_indices)
+    final_order = []
+    for row in rows_unique:
+        mask = row_indices[order] == row
+        row_pos = np.where(mask)[0]
+        if len(row_pos) == 0:
+            continue
+        row_ixs = order[row_pos]
+        if row % 2 == 1:
+            row_ixs = row_ixs[::-1]
+        final_order.extend(row_ixs.tolist())
+    return final_order
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -635,27 +634,29 @@ def generate_sfx(params: dict) -> list[gcode.Polyline]:
 def compile_page(page_desc: dict) -> list[gcode.Polyline]:
     """Walk the manga_page.json tree and compile all elements into layered polylines."""
     all_polylines: list[gcode.Polyline] = []
+    pw = page_desc.get("page_width", 180)
+    ph = page_desc.get("page_height", 175)
 
     # Panel borders
     all_polylines.extend(generate_panels(page_desc))
 
     # Per-panel children
     for panel in page_desc.get("panels", []):
+        panel_bounds = panel.get("bounds", [0, 0, pw, ph])
         for child in panel.get("children", []):
             child_type = child.get("type", "")
             if child_type == "speed_lines":
-                child["bounds"] = child.get("bounds", panel.get("bounds", [0, 0, 180, 175]))
-                all_polylines.extend(generate_speed_lines(child))
+                params = {**child, "bounds": child.get("bounds", panel_bounds)}
+                all_polylines.extend(generate_speed_lines(params))
             elif child_type == "tone":
-                if not child.get("polygon") and child.get("bounds"):
-                    b = child["bounds"]
-                    child["polygon"] = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
-                elif not child.get("polygon"):
-                    pw = page_desc.get("page_width", 180)
-                    ph = page_desc.get("page_height", 175)
-                    b = panel.get("bounds", [0, 0, pw, ph])
-                    child["polygon"] = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
-                all_polylines.extend(generate_tone(child))
+                params = dict(child)  # shallow copy to avoid mutating caller
+                if not params.get("polygon") and params.get("bounds"):
+                    b = params["bounds"]
+                    params["polygon"] = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+                elif not params.get("polygon"):
+                    b = panel_bounds
+                    params["polygon"] = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+                all_polylines.extend(generate_tone(params))
             elif child_type == "bubble":
                 all_polylines.extend(generate_bubble(child))
             elif child_type == "effect":
@@ -668,7 +669,7 @@ def compile_page(page_desc: dict) -> list[gcode.Polyline]:
                     all_polylines.extend(generate_emotion_lines(child))
             elif child_type == "sfx":
                 # Offset SFX to panel center
-                bounds = panel.get("bounds", [0, 0, 180, 175])
+                bounds = panel_bounds
                 cx = (bounds[0] + bounds[2]) / 2
                 cy = (bounds[1] + bounds[3]) / 2
                 sfx_pls = generate_sfx(child)
@@ -783,13 +784,13 @@ def _rounded_rect_pts(x, y, w, h, r, n_corner=6):
 def _jagged_ellipse(cx, cy, a, b, n=24, spike=1.5):
     """Ellipse with random outward spikes for jagged/excited bubble."""
     pts = []
-    for i in range(n + 1):
+    for i in range(n):  # n points, then close
         angle = 2 * math.pi * i / n
         r_offset = random.uniform(-spike, spike)
         ea = a + r_offset
         eb = b + r_offset
         pts.append((cx + ea * math.cos(angle), cy + eb * math.sin(angle)))
-    pts.append(pts[0])
+    pts.append(pts[0])  # close polygon
     return pts
 
 

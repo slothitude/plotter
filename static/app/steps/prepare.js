@@ -81,7 +81,7 @@ function initTransforms() {
 
 function updateTransform(key, value) {
     const t = { ...getState().transform, [key]: value };
-    setState({ transform: t, gcodeGenerated: false, toolpath: [], twoPass: false, twoPassId2: null });
+    setState({ transform: t, gcodeGenerated: false, toolpath: [], twoPass: false, twoPassId2: null, wcStep: 0 });
     document.getElementById('wc-twopass-badge')?.classList.add('hidden');
     // Re-enable convert button
     document.getElementById('btn-convert').disabled = false;

@@ -60,13 +60,13 @@ function startPrint() {
 }
 
 function stopPrint() {
-    const s = getState();
     api('/api/stop', { method: 'POST' }).then(() => {
         toast('Plotting stopped', 'warn');
         setState({ busy: false });
         updateBusyState(false);
         // Reset watercolor workflow to step 1 if active
-        if (s.twoPass && s.wcStep > 0 && s.wcStep < 4) {
+        const now = getState();
+        if (now.twoPass && now.wcStep > 0 && now.wcStep < 4) {
             setState({ wcStep: 1 });
         }
     });

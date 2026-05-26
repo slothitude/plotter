@@ -429,7 +429,12 @@ def convert_svg():
             # Flip Y for correct text orientation on physical print.
             # Text is pre-positioned in page-space (Y-down, origin top-left).
             # Printer bed is Y-up, so we reflect: y_bed = bed_y - y_screen.
-            bed_y = transform_kwargs.get("bed_y", config.PRINTER_BED_Y)
+            # Use page height (not bed height) to avoid shifting manga coordinates.
+            page_size = config.load_page_size()
+            bed_y = transform_kwargs.get("bed_y", page_size.get("height", config.PRINTER_BED_Y))
+            bed_x = transform_kwargs.get("bed_x", page_size.get("width", config.PRINTER_BED_X))
+            transform_kwargs["bed_x"] = bed_x
+            transform_kwargs["bed_y"] = bed_y
             flipped = [gcode.Polyline(points=[(x, bed_y - y) for x, y in pl.points],
                                        layer=pl.layer)
                        for pl in raw_polylines]
@@ -460,7 +465,7 @@ def convert_svg():
                 if seg["type"] == "draw" and len(seg["points"]) >= 2:
                     preview_polylines.append(gcode.Polyline(
                         points=[tuple(p) for p in seg["points"]],
-                        layer=seg.get("layer", 0),
+                        layer=seg.get("layer", ""),
                     ))
             stats = gcode.compute_stats(
                 preview_polylines, travel_segs,
@@ -534,6 +539,9 @@ def convert_pass2():
 
     if file_id not in uploaded_svgs:
         return jsonify({"error": "Original SVG not found"}), 404
+
+    if uploaded_svgs.get(file_id) is None:
+        return jsonify({"error": "Two-pass watercolor not supported for text/manga polylines"}), 400
 
     try:
         # Re-parse SVG and re-run the full pipeline to get polylines + transform

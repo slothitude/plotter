@@ -6,22 +6,37 @@
 
 ## Stage 3: Watercolor + Auto Water Dip ✅ DONE
 
-## Manga Plotter Toolkit
+## Manga Plotter Toolkit ✅ DONE
 
-- [x] Core generators (panels, tone, bubbles, SFX, speed lines, effects)
-- [x] Layer system with per-layer feed rates (border→outline→detail→tone→effect→text)
-- [x] Panel presets (2-row, 3-panel, 4-grid, 2-3, L-shape, manga-1)
-- [x] Dot tone with vectorized point-in-polygon + boustrophedon sort
-- [x] Speech bubble shapes (round, oval, square, cloud, thought, shout) + tails
-- [x] SFX lettering with rotation
-- [x] Gradient tone generation
-- [x] Line tone and crosshatch tone
-- [x] Frontend manga-tools.js UI
-- [x] API dispatch endpoint `POST /api/manga/generate`
-- [x] Pipeline: compile → text_polylines → convert → G-code
-- [x] Test panel detection with realistic strokes (8/8 tests: clean, wobbly, multi-stroke merging, close/far panels, degenerate, clamping, min-size)
-- [x] Test compile-page flow (multi-layer: border + tone + effect + text)
-- [x] Integration test: multi-layer page via compile_page (2 panels, speed lines, bubble, dot tone, SFX)
-- [x] Edge case: empty/zero-area panels (empty page, no children, zero-area polygon, <3 points)
-- [x] Edge case: tone on tiny region (1mm² → 4 dots, no crash)
-- [x] Fix: compile_page now converts tone `bounds` to `polygon` when missing (falls back to panel bounds)
+## Code Audit Fixes
+
+### Critical
+- [x] #1 wcStep reset on new SVG/convert — added `wcStep: 0` to all reset points (create.js, prepare.js)
+
+### High
+- [x] #2 _points_in_polygon replaced with ray-casting algorithm — works for concave polygons now
+- [x] #3 Page dimension defaults to configured page size (not 220x220 bed) for manga convert
+
+### Medium
+- [x] #4 generate_rain — moved random.uniform inside loop for varying line lengths
+- [x] #5 _jagged_ellipse — changed to range(n) + close, no triple point
+- [x] #6 compile_page — shallow-copies child dicts, no longer mutates caller
+- [x] #7 _emit_stroke_pass — resolves per-layer draw speed via config.LAYER_SPEEDS
+- [x] #8 app.py default layer — changed `0` to `""` to match Polyline.layer str type
+- [x] #9 Stop handler — re-reads getState() inside .then() callback instead of stale capture
+- [x] #10 Layer sort — documented that stable sort preserves optimization within groups
+
+### Low
+- [x] #11 Print stats now include "status" field: completed/stopped/error
+- [x] #12 _print_start_time cleared to None in finally block
+- [ ] #13 G0 XY moves not tracked for distance (dormant — current G-code uses G1 for draws)
+- [ ] #14 Wear compensation XYZ moves bypass pen-state detection (dormant, wear_rate=0)
+- [ ] #15 Stats fields cross-thread unsynchronized (safe under CPython GIL)
+- [ ] #16 twoPassId2 stored in state but never read (dead data — kept for potential future use)
+- [ ] #17 No intermediate busy state during pass 2 regeneration
+- [ ] #18 No input validation on bounds length before tuple unpacking
+- [x] #19 generate_impact_burst — clamped n_points to minimum 3
+- [x] #20 Extracted _boustrophedon_sort helper, removed duplication
+- [x] #21 Gradient tone — precomputed cos/sin tables, no per-dot trig calls
+- [x] #22 convert-pass2 — added guard for manga IDs (None SVG path)
+- [ ] #23 Simplification tolerance 0.3mm risks collapsing tiny dot tone at high LPI

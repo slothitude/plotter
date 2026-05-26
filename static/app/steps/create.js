@@ -34,7 +34,7 @@ export function initCreate() {
         }
         // Reset gcode state when new SVG loaded (needs re-convert)
         if (changed.currentSvgId !== undefined && changed.currentSvgId !== null) {
-            setState({ gcodeGenerated: false, twoPass: false, twoPassId2: null });
+            setState({ gcodeGenerated: false, twoPass: false, twoPassId2: null, wcStep: 0 });
         }
     });
 }

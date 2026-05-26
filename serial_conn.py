@@ -260,13 +260,16 @@ class SerialConnection:
             # Store print stats
             if self._print_start_time:
                 elapsed = time.time() - self._print_start_time
+                status = "stopped" if self._stop_requested else ("error" if self._current_file and self._completed_commands < self._total_commands else "completed")
                 self.last_print_stats = {
+                    "status": status,
                     "duration_s": round(elapsed, 1),
                     "pen_down_m": round(self._pen_down_dist / 1000, 2),
                     "total_commands": self._completed_commands,
                     "file": self._current_file,
                 }
-                print(f"  Print done: {elapsed:.1f}s, {self._pen_down_dist/1000:.2f}m drawn, {self._completed_commands} commands", flush=True)
+                print(f"  Print {status}: {elapsed:.1f}s, {self._pen_down_dist/1000:.2f}m drawn, {self._completed_commands} commands", flush=True)
+                self._print_start_time = None
             # Park after plot finishes or is stopped
             if not self._stop_requested:
                 try:

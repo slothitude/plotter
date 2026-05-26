@@ -501,6 +501,10 @@ def _emit_stroke_pass(
         if len(polyline.points) < 2:
             continue
 
+        # Resolve per-layer draw speed
+        pl_layer = polyline.layer or ""
+        effective_speed = config.LAYER_SPEEDS.get(pl_layer, draw_speed)
+
         lines.append(f"; Stroke {pl_idx + 1}")
 
         # Water dip check
@@ -539,9 +543,9 @@ def _emit_stroke_pass(
                 if mv.max_wear_depth > 0:
                     wear = min(wear, mv.max_wear_depth)
                 seg_z = pen_down_z - wear
-                lines.append(f"G1 X{px:.3f} Y{py:.3f} Z{seg_z:.3f} F{draw_speed:.0f}")
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} Z{seg_z:.3f} F{effective_speed:.0f}")
             else:
-                lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} F{effective_speed:.0f}")
             draw_pts.append([px, py])
             segment_count += 1
             prev_pos = (px, py)
@@ -843,8 +847,9 @@ def polylines_to_gcode(
     cumulative_draw_dist = 0.0
     current_layer = None  # track layer for speed switching
 
-    # Sort polylines into layer groups for efficient speed switching
-    # Layer order: border → outline → detail → tone → effect → text → (untagged)
+    # Sort polylines into layer groups for efficient speed switching.
+    # Layer order: border → outline → detail → tone → effect → text → (untagged).
+    # Python sort is stable, so path optimization order is preserved within each layer.
     _layer_order = ["border", "outline", "detail", "tone", "effect", "text", ""]
     tagged = [(pl, _layer_order.index(pl.layer) if pl.layer in _layer_order else len(_layer_order)) for pl in polylines]
     tagged.sort(key=lambda x: x[1])
