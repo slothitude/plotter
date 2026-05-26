@@ -176,14 +176,14 @@ def load_profile(tool_name: str) -> ToolProfile:
         else:
             profile.height.pen_up_z = profile.height.pen_down_z + profile.movement.lift_height
 
-        # Watercolor: derive cup/dip from pen_down_z
-        if profile.water.enabled:
-            profile.water.cup_height = profile.height.pen_down_z + 10.0  # scrape height
-            profile.water.dip_depth = profile.height.pen_down_z  # dip to Z=0 (bed/water level)
+    # Watercolor: derive cup/dip from pen_down_z (whether calibrated or TOML default)
+    if profile.water.enabled:
+        profile.water.cup_height = profile.height.pen_down_z + 10.0  # scrape height
+        profile.water.dip_depth = profile.height.pen_down_z  # dip to Z=0 (bed/water level)
 
-        # Pass 2 uses same calibrated pen_down_z
-        if profile.water.two_pass:
-            profile.water.pass2.pen_down_z = profile.height.pen_down_z
+    # Pass 2 uses same pen_down_z
+    if profile.water.two_pass:
+        profile.water.pass2.pen_down_z = profile.height.pen_down_z
 
     return profile
 

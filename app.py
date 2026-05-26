@@ -78,7 +78,17 @@ def _raise_to_safe():
 uploaded_svgs: dict[str, str] = {}  # id -> file path
 generated_gcode: dict[str, str] = {}  # id -> gcode string
 text_polylines: dict[str, list] = {}  # id -> polylines (from text patterns, no SVG round-trip)
+wc_context: dict[str, dict] = {}  # id -> {tool, transform_kwargs} for two-pass reconversion
 ws_clients: list = []
+MAX_STORE_SIZE = 100
+
+
+def _trim_stores():
+    """Evict oldest entries if stores exceed MAX_STORE_SIZE."""
+    for store in (uploaded_svgs, generated_gcode, text_polylines, wc_context):
+        while len(store) > MAX_STORE_SIZE:
+            oldest = next(iter(store))
+            store.pop(oldest)
 
 # Ink / Slate state
 _slate_process: subprocess.Popen | None = None
@@ -296,13 +306,18 @@ def get_status():
 
 @app.route("/api/send-command", methods=["POST"])
 def send_command():
-    """Send a raw G-code command and return the response."""
+    """Send a G-code command and return the response."""
     if not serial.is_connected:
         return jsonify({"error": "Printer not connected"}), 400
     data = request.json or {}
     command = data.get("command", "").strip()
     if not command:
         return jsonify({"error": "command required"}), 400
+    # Only allow safe movement/control commands
+    allowed_prefixes = ("G0", "G1", "G4", "G28", "G90", "G91", "M84", "M112")
+    cmd_upper = command.upper().split(";")[0].strip()
+    if not any(cmd_upper.startswith(p) for p in allowed_prefixes):
+        return jsonify({"error": f"Command not allowed: {command.split()[0]}"}), 400
     try:
         serial.send_command(command)
         return jsonify({"ok": True, "command": command})
@@ -387,6 +402,11 @@ def convert_svg():
                 gcode_path_p2 = config.OUTPUT_DIR / f"{id_pass2}.gcode"
                 with open(gcode_path_p2, "w") as f:
                     f.write(pass2_gc)
+                # Store context for pass2 reconversion after recalibration
+                wc_context[file_id] = {
+                    "tool": tool_name,
+                    "transform_kwargs": transform_kwargs,
+                }
         else:
             # Direct polyline conversion (text patterns — no SVG round-trip)
             raw_polylines = text_polylines[file_id]
@@ -441,6 +461,7 @@ def convert_svg():
             polylines = preview_polylines
 
         generated_gcode[file_id] = gc
+        _trim_stores()
 
         # Save G-code file
         gcode_path = config.OUTPUT_DIR / f"{file_id}.gcode"
@@ -476,6 +497,97 @@ def convert_svg():
             resp["two_pass"] = True
             resp["id_pass2"] = id_pass2
         return jsonify(resp)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/convert-pass2", methods=["POST"])
+def convert_pass2():
+    """Regenerate watercolor pass 2 G-code with current calibration values.
+
+    Called after user recalibrates Z for the brush tool, so pass 2 uses
+    the updated pen_down_z from calibration.json.
+    """
+    data = request.json or {}
+    file_id = data.get("id")
+    tool_name = data.get("tool", "watercolor")
+
+    if file_id not in wc_context:
+        return jsonify({"error": "No watercolor context found — convert first"}), 404
+
+    ctx = wc_context[file_id]
+    saved_tool = ctx.get("tool", tool_name)
+    transform_kwargs = ctx["transform_kwargs"]
+
+    # Reload profile (picks up updated calibration.json)
+    profile = config.load_profile(saved_tool)
+    if profile.height.pen_down_z == 0.0:
+        return jsonify({"error": f"Tool '{saved_tool}' not calibrated (pen_down_z=0). Run calibration first."}), 400
+
+    if file_id not in uploaded_svgs:
+        return jsonify({"error": "Original SVG not found"}), 404
+
+    try:
+        # Re-parse SVG and re-run the full pipeline to get polylines + transform
+        polylines = gcode.parse_svg(uploaded_svgs[file_id])
+        polylines = gcode.apply_fill(polylines, profile.fill)
+
+        # Simplify
+        if transform_kwargs.get("simplify"):
+            simplified = []
+            for pl in polylines:
+                pts = gcode.simplify_polyline(pl.points, transform_kwargs.get("simplify_tolerance", 0.1))
+                if len(pts) >= 2:
+                    simplified.append(gcode.Polyline(points=pts, layer=pl.layer, color=pl.color))
+            polylines = simplified
+
+        # Rotate/mirror
+        user_rotate = transform_kwargs.get("user_rotate", 0.0)
+        mirror_x = transform_kwargs.get("mirror_x", False)
+        mirror_y = transform_kwargs.get("mirror_y", False)
+        if user_rotate != 0.0 or mirror_x or mirror_y:
+            import math as _math
+            transformed = []
+            cos_r = _math.cos(_math.radians(user_rotate))
+            sin_r = _math.sin(_math.radians(user_rotate))
+            for pl in polylines:
+                new_pts = []
+                for px, py in pl.points:
+                    rx = px * cos_r - py * sin_r
+                    ry = px * sin_r + py * cos_r
+                    if mirror_x: rx = -rx
+                    if mirror_y: ry = -ry
+                    new_pts.append((rx, ry))
+                transformed.append(gcode.Polyline(points=new_pts, layer=pl.layer, color=pl.color))
+            polylines = transformed
+
+        if transform_kwargs.get("optimize", True):
+            polylines = gcode.optimize_path(polylines)
+
+        # Run through polylines_to_gcode to get the transform + pass2 gcode
+        result = gcode.polylines_to_gcode(polylines, profile, **transform_kwargs)
+        # Two-pass mode returns (pass1_str, pass2_str, toolpath, meta)
+        if profile.water.enabled and profile.water.two_pass:
+            _, pass2_gc, toolpath, meta = result
+        else:
+            # Fallback: profile changed since initial convert
+            return jsonify({"error": "Water tool profile no longer has two-pass enabled"}), 400
+
+        id_pass2 = f"{file_id}_pass2"
+        generated_gcode[id_pass2] = pass2_gc
+
+        # Save pass2 file
+        gcode_path_p2 = config.OUTPUT_DIR / f"{id_pass2}.gcode"
+        with open(gcode_path_p2, "w") as f:
+            f.write(pass2_gc)
+
+        line_count = len([l for l in pass2_gc.splitlines() if l.strip() and not l.strip().startswith(";")])
+
+        return jsonify({
+            "id": id_pass2,
+            "line_count": line_count,
+            "ok": True,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -599,7 +711,7 @@ def test_pattern():
             svg_parts.append(f'<line x1="{page_w - margin}" y1="{y}" x2="{page_w - m2}" y2="{y}" stroke="black"/>')
         svg_parts.append('</svg>')
         svg_content = "\n".join(svg_parts)
-        svg_id = str(uuid.uuid4())
+        svg_id = uuid.uuid4().hex[:8]
         svg_path = f"output/{svg_id}.svg"
         with open(svg_path, "w") as f:
             f.write(svg_content)
@@ -607,7 +719,7 @@ def test_pattern():
         polylines = gcode.parse_svg(svg_path)
         return jsonify({
             "id": svg_id,
-            "polylines": polylines,
+            "polylines": [[[round(x, 2), round(y, 2)] for x, y in pl.points] for pl in polylines],
             "stroke_count": len(polylines),
         })
 
@@ -991,7 +1103,8 @@ def ink_stream():
     if not points and not stroke_end:
         return jsonify({"status": "ok"})
     if points:
-        _ink_strokes.append(points)
+        with _live_lock:
+            _ink_strokes.append(points)
         print(f"  INK: {len(points)} pts, ws_clients={len(ws_clients)}", flush=True)
         _broadcast_ink(points)
 
@@ -1068,12 +1181,13 @@ def ink_capture():
     global _slate_process, _ink_strokes
     if _slate_process and _slate_process.poll() is None:
         return jsonify({"error": "Capture already running"}), 400
-    _ink_strokes.clear()
+    with _live_lock:
+        _ink_strokes.clear()
     _slate_process = subprocess.Popen(
         ["python", "capture.py", "--api", "http://localhost:5000"],
         cwd=PENZ_DIR,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     return jsonify({"ok": True, "pid": _slate_process.pid})
 
@@ -1089,7 +1203,10 @@ def ink_stop():
         except subprocess.TimeoutExpired:
             _slate_process.kill()
 
-    stroke_count = sum(len(s) for s in _ink_strokes)
+    with _live_lock:
+        ink_snapshot = list(_ink_strokes)
+        _ink_strokes.clear()
+    stroke_count = sum(len(s) for s in ink_snapshot)
     if stroke_count == 0:
         _slate_process = None
         return jsonify({"error": "No strokes captured"}), 400
@@ -1108,7 +1225,7 @@ def ink_stop():
         viewBox=f"0 0 {pw} {ph}",
     )
 
-    for batch in _ink_strokes:
+    for batch in ink_snapshot:
         if len(batch) < 2:
             continue
         # Wacom Slate A5 portrait: swap X/Y + rotate 180 (same as _wacom_to_bed)
@@ -1123,7 +1240,6 @@ def ink_stop():
 
     dwg.save()
     uploaded_svgs[file_id] = str(svg_path)
-    _ink_strokes.clear()
     _slate_process = None
 
     return jsonify({"id": file_id, "stroke_count": stroke_count})
@@ -1143,8 +1259,8 @@ def ink_sync():
     proc = subprocess.Popen(
         ["python", "sync.py"],
         cwd=PENZ_DIR,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     return jsonify({"ok": True, "pid": proc.pid})
 
@@ -2065,6 +2181,8 @@ def cleanup_output():
                 removed += 1
     uploaded_svgs.clear()
     generated_gcode.clear()
+    text_polylines.clear()
+    wc_context.clear()
     return jsonify({"ok": True, "removed": removed})
 
 
@@ -2072,7 +2190,9 @@ def cleanup_output():
 
 @app.route("/api/shutdown", methods=["POST"])
 def shutdown():
-    """Shut down the Flask server."""
+    """Shut down the Flask server. Restricted to localhost only."""
+    if request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "Forbidden"}), 403
     func = request.environ.get("werkzeug.server.shutdown")
     if func is not None:
         func()

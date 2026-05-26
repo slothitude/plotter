@@ -52,20 +52,22 @@ class SerialConnection:
             raise ConnectionError(f"Failed to connect to {port}: {e}")
 
     def disconnect(self):
-        self._stop_requested = True
-        self._sending = False
-        self._live_sending = False
+        with self._lock:
+            self._stop_requested = True
+            self._sending = False
+            self._live_sending = False
         # Wait for threads to finish before closing serial
         if self._sender_thread and self._sender_thread.is_alive():
             self._sender_thread.join(timeout=3)
         if self._live_thread and self._live_thread.is_alive():
             self._live_thread.join(timeout=3)
-        if self._serial and self._serial.is_open:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-        self._serial = None
+        with self._lock:
+            if self._serial and self._serial.is_open:
+                try:
+                    self._serial.close()
+                except Exception:
+                    pass
+            self._serial = None
 
     @property
     def is_connected(self) -> bool:
@@ -211,17 +213,19 @@ class SerialConnection:
                         print("  Serial lost — attempting reconnect for park...", flush=True)
                         self.connect(self._last_port)
                     self._send_direct("G90")
-                    self._send_direct(f"G1 Z{20:.3f} F3000")
+                    self._send_direct("G1 Z30.000 F3000")  # MUST be 30 before X goes below 30 (cup)
                     self._send_direct("G0 X0.000 Y0.000 F3000")
                     self._send_direct("M84")
                 except Exception as _e:
                     print(f"  Park failed: {_e}", flush=True)
 
     def stop(self):
-        self._stop_requested = True
-        self._queue.clear()
-        self._stroke_queue.clear()
-        self._live_sending = False
+        with self._lock:
+            self._stop_requested = True
+            self._queue.clear()
+            self._stroke_queue.clear()
+            self._live_sending = False
+            self._sending = False
         if self.is_connected:
             try:
                 with self._lock:
@@ -232,7 +236,6 @@ class SerialConnection:
                     self._serial.flush()
             except Exception:
                 pass
-        self._sending = False
 
     # ── Live Plot Mode ──────────────────────────────────────────────────
 
@@ -248,10 +251,22 @@ class SerialConnection:
         with self._lock:
             self._serial.write(b"G28\n")
             self._serial.flush()
-            self._drain()
-            time.sleep(1)
+            # Wait for homing to complete
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                line = self._serial.readline()
+                if not line:
+                    continue
+                decoded = line.decode(errors="ignore").strip()
+                if "ok" in decoded.lower():
+                    break
             self._serial.write(b"G90\n")
             self._serial.flush()
+            # Query position before Z move (G28 guarantees known position)
+            self._serial.write(b"M114\n")
+            self._serial.flush()
+            time.sleep(0.5)
+            self._drain()
             self._serial.write(f"G1 Z{safe_z:.3f} F3000\n".encode())
             self._serial.flush()
             self._drain()

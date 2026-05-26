@@ -490,6 +490,8 @@ def _emit_stroke_pass(
     segment_count = segment_start
     prev_pos = (0.0, 0.0)
     cumulative_draw_dist = 0.0
+    mv = profile.movement if profile else None
+    ht = profile.height if profile else None
 
     # Initial water dip if requested (e.g. start of wet pass)
     if water_cfg and initial_dip and profile:
@@ -513,8 +515,15 @@ def _emit_stroke_pass(
         toolpath.append({"type": "travel", "points": travel_pts, "layer": polyline.layer})
         prev_pos = (sx, sy)
 
-        # Pen down
-        lines.append(f"G1 Z{pen_down_z:.3f} F{travel_speed:.0f} ; Pen down")
+        # Pen down — with wear compensation
+        if mv and mv.wear_rate > 0:
+            wear = cumulative_draw_dist / 1000.0 * mv.wear_rate
+            if mv.max_wear_depth > 0:
+                wear = min(wear, mv.max_wear_depth)
+            down_z = pen_down_z - wear
+        else:
+            down_z = pen_down_z
+        lines.append(f"G1 Z{down_z:.3f} F{travel_speed:.0f} ; Pen down")
 
         # Draw
         draw_pts = [[sx, sy]]
@@ -524,7 +533,15 @@ def _emit_stroke_pass(
             # Skip micro-moves, but always keep last point of polyline
             if dist < MIN_MOVE_DIST and i < len(polyline.points) - 1:
                 continue
-            lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
+            if mv and mv.wear_rate > 0:
+                cumulative_draw_dist += dist
+                wear = cumulative_draw_dist / 1000.0 * mv.wear_rate
+                if mv.max_wear_depth > 0:
+                    wear = min(wear, mv.max_wear_depth)
+                seg_z = pen_down_z - wear
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} Z{seg_z:.3f} F{draw_speed:.0f}")
+            else:
+                lines.append(f"G1 X{px:.3f} Y{py:.3f} F{draw_speed:.0f}")
             draw_pts.append([px, py])
             segment_count += 1
             prev_pos = (px, py)
@@ -591,7 +608,7 @@ def _watercolor_pass2_gcode(polylines, transform, profile, svg_w, svg_h, scaled_
     ht = profile.height
     wt = profile.water
     p2 = wt.pass2
-    safe_z = max(config.SAFE_Z, p2.lift_height)
+    safe_z = max(config.SAFE_Z, ht.pen_up_z)
 
     lines = []
     toolpath = []
