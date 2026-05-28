@@ -29,6 +29,7 @@ class SerialConnection:
         self._stroke_queue: deque[str] = deque()
         self._live_sending = False
         self._live_thread: Optional[threading.Thread] = None
+        self._paused = False
         # Print stats
         self._print_start_time: Optional[float] = None
         self._pen_down: bool = False
@@ -372,10 +373,37 @@ class SerialConnection:
         """Queue a complete stroke's G-code for live sending."""
         self._stroke_queue.extend(gcode_lines)
 
+    def pause(self):
+        """Pause plotter during live mode (M0)."""
+        if not self.is_connected or not self._live_sending:
+            return
+        with self._lock:
+            self._serial.write(b"M0\n")
+            self._serial.flush()
+        self._paused = True
+
+    def resume(self):
+        """Resume from pause (M108)."""
+        if not self.is_connected:
+            return
+        with self._lock:
+            self._serial.write(b"M108\n")
+            self._serial.flush()
+        self._paused = False
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
     def _live_send_loop(self):
         """Send queued G-code lines one at a time, waiting for 'ok' ack."""
         idle_since = time.time()
         while not self._stop_requested and self._live_sending:
+            # Wait while paused
+            if self._paused:
+                time.sleep(0.1)
+                idle_since = time.time()
+                continue
             if not self._stroke_queue:
                 if time.time() - idle_since > 300:  # 5min idle timeout
                     break

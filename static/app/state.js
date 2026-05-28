@@ -56,6 +56,9 @@ const state = {
     capturing: false,
     livePlotActive: false,
     inkStrokes: [],
+    liveStrokes: [],          // completed strokes rendered on canvas
+    liveCurrentStroke: null,  // in-progress stroke being drawn
+    jogMode: false,           // Slate as jog controller mode
 
     // Jog
     jogStep: 10,

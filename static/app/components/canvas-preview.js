@@ -9,7 +9,8 @@ export function initCanvasPreview() {
         if (changed.polylines !== undefined || changed.toolpath !== undefined ||
             changed.showDraw !== undefined || changed.showTravel !== undefined ||
             changed.showGrid !== undefined || changed.pageWidth !== undefined ||
-            changed.pageHeight !== undefined) {
+            changed.pageHeight !== undefined ||
+            changed.liveStrokes !== undefined || changed.liveCurrentStroke !== undefined) {
             redrawAll(state);
         }
     });
@@ -66,6 +67,11 @@ export function drawCanvas(canvasId, state) {
     // Toolpath (G-code preview — already in bed coordinates, render directly)
     if (s.toolpath && s.toolpath.length > 0) {
         drawToolpath(ctx, ox, oy, scale, s.toolpath, s.showDraw, s.showTravel);
+    }
+
+    // Live strokes from Slate
+    if (s.liveStrokes?.length || s.liveCurrentStroke) {
+        drawLiveStrokes(ctx, ox, oy, scale, s.liveStrokes || [], s.liveCurrentStroke);
     }
 }
 
@@ -219,6 +225,53 @@ function drawToolpath(ctx, ox, oy, scale, toolpath, showDraw, showTravel) {
         }
         ctx.stroke();
         ctx.setLineDash([]);
+    }
+}
+
+function drawLiveStrokes(ctx, ox, oy, scale, completedStrokes, currentStroke) {
+    // Completed strokes — pressure-colored
+    for (const stroke of completedStrokes) {
+        if (!stroke || stroke.length < 2) continue;
+        for (let i = 1; i < stroke.length; i++) {
+            const p0 = stroke[i - 1];
+            const p1 = stroke[i];
+            const pressure = p1.length >= 3 ? p1[2] : 2048;
+            const { color, width } = pressureStyle(pressure, false);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.beginPath();
+            // Points are in page coordinates — draw on page area
+            ctx.moveTo(ox + p0[0] * scale, oy + p0[1] * scale);
+            ctx.lineTo(ox + p1[0] * scale, oy + p1[1] * scale);
+            ctx.stroke();
+        }
+    }
+    // Current (in-progress) stroke — brighter
+    if (currentStroke && currentStroke.length >= 2) {
+        for (let i = 1; i < currentStroke.length; i++) {
+            const p0 = currentStroke[i - 1];
+            const p1 = currentStroke[i];
+            const pressure = p1.length >= 3 ? p1[2] : 2048;
+            const { color, width } = pressureStyle(pressure, true);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.beginPath();
+            ctx.moveTo(ox + p0[0] * scale, oy + p0[1] * scale);
+            ctx.lineTo(ox + p1[0] * scale, oy + p1[1] * scale);
+            ctx.stroke();
+        }
+    }
+}
+
+function pressureStyle(pressure, isActive) {
+    // Low (0-1024): blue/thin, Mid (1024-3072): cyan/medium, High (3072-4095): orange/thick
+    const alpha = isActive ? 1.0 : 0.7;
+    if (pressure < 1024) {
+        return { color: `rgba(100,149,237,${alpha})`, width: 0.5 };   // cornflower blue
+    } else if (pressure < 3072) {
+        return { color: `rgba(0,220,220,${alpha})`, width: 1.0 };     // cyan
+    } else {
+        return { color: `rgba(255,165,0,${alpha})`, width: 1.5 };     // orange
     }
 }
 

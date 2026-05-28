@@ -8,6 +8,7 @@ import { redrawCanvas } from '../components/canvas-preview.js';
 export function initPlot() {
     initPrint();
     initLivePlot();
+    initJogMode();
     initCanvasOverlays();
     initWcWorkflow();
 
@@ -20,12 +21,14 @@ export function initPlot() {
         }
         if (changed.connected !== undefined || changed.capturing !== undefined) {
             updateLivePlotButton(state);
+            updateJogButton(state);
         }
         if (changed.gcodeGenerated !== undefined || changed.currentSvgId !== undefined) {
             updatePrintButton(state);
         }
         if (changed.toolpath !== undefined || changed.polylines !== undefined ||
-            changed.pageWidth !== undefined || changed.pageHeight !== undefined) {
+            changed.pageWidth !== undefined || changed.pageHeight !== undefined ||
+            changed.liveStrokes !== undefined || changed.liveCurrentStroke !== undefined) {
             redrawCanvas('plot-canvas');
         }
         if (changed.stats !== undefined && changed.stats) {
@@ -33,6 +36,9 @@ export function initPlot() {
         }
         if (changed.twoPass !== undefined || changed.wcStep !== undefined) {
             updateWcWorkflow(state);
+        }
+        if (changed.jogMode !== undefined) {
+            updateJogButton(state);
         }
     });
 }
@@ -309,4 +315,52 @@ function formatTime(seconds) {
     const m = Math.floor(seconds / 60);
     const s = Math.round(seconds % 60);
     return `${m}m ${s}s`;
+}
+
+// ── Jog Mode ──
+function initJogMode() {
+    document.getElementById('btn-jog-mode')?.addEventListener('click', toggleJogMode);
+    updateJogButton(getState());
+}
+
+function toggleJogMode() {
+    const s = getState();
+    const btn = document.getElementById('btn-jog-mode');
+    if (!btn) return;
+
+    if (s.jogMode) {
+        api('/api/ink/jog-stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(() => {
+                setState({ jogMode: false });
+                btn.classList.remove('active');
+                btn.textContent = 'Start Jog Mode';
+                toast('Jog mode stopped', 'info');
+            })
+            .catch(err => toast('Jog stop failed: ' + err.message, 'error'));
+    } else {
+        apiPost('/api/ink/jog-start', { tool: s.tool })
+            .then(data => {
+                if (data.error) return toast(data.error, 'error');
+                setState({ jogMode: true });
+                btn.classList.add('active');
+                btn.textContent = 'Stop Jog Mode';
+                toast('Jog mode active \u2014 tap Slate to move plotter', 'success');
+            })
+            .catch(err => toast('Jog start failed: ' + err.message, 'error'));
+    }
+}
+
+function updateJogButton(state) {
+    const btn = document.getElementById('btn-jog-mode');
+    if (!btn) return;
+    const canStart = state.connected && (state.capturing || state.jogMode);
+    btn.disabled = !canStart;
+    if (state.jogMode) {
+        btn.classList.add('active');
+        btn.textContent = 'Stop Jog Mode';
+    } else {
+        btn.classList.remove('active');
+        btn.textContent = 'Start Jog Mode';
+    }
 }

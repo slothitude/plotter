@@ -128,6 +128,9 @@ _live_lock = threading.Lock()
 _live_plot_active = False
 _live_plot_profile = None
 _live_stroke_points: list = []  # accumulate mm points for current stroke
+_jog_mode_active = False
+_jog_pen_down = False
+_jog_tool = "pencil"
 
 
 def _wacom_to_bed(wacom_x, wacom_y, page_w, page_h):
@@ -141,18 +144,41 @@ def _wacom_to_bed(wacom_x, wacom_y, page_w, page_h):
     return round(x_mm, 3), round(y_mm, 3)
 
 
+def _pressure_to_speed(pressure, base_speed):
+    """Map pressure (0-4095) to feed rate. Higher pressure = slower = bolder."""
+    PRESSURE_MIN_SPEED = 600    # mm/min at max pressure (slow = bold)
+    PRESSURE_MAX_SPEED = 2000   # mm/min at min pressure (fast = light)
+    PRESSURE_CEILING = 4095     # 12-bit max
+    if pressure <= 0:
+        return base_speed
+    ratio = min(pressure / PRESSURE_CEILING, 1.0)
+    return PRESSURE_MIN_SPEED + (PRESSURE_MAX_SPEED - PRESSURE_MIN_SPEED) * (1.0 - ratio)
+
+
 def _stroke_to_gcode(points_mm, profile):
-    """Convert a list of (x_mm, y_mm) points to G-code lines for one stroke."""
+    """Convert a list of (x_mm, y_mm[, pressure]) points to G-code lines for one stroke.
+
+    Pressure-responsive: maps 12-bit pressure to pen feed rate with EMA smoothing.
+    """
     if len(points_mm) < 2:
         return []
     ht = profile.height
     mv = profile.movement
     lines = []
-    x0, y0 = points_mm[0]
+    x0, y0 = points_mm[0][0], points_mm[0][1]
     lines.append(f"G0 X{x0:.3f} Y{y0:.3f} F{mv.travel_speed:.0f}")
     lines.append(f"G1 Z{ht.pen_down_z:.3f} F3000")
-    for x, y in points_mm[1:]:
-        lines.append(f"G1 X{x:.3f} Y{y:.3f} F{mv.draw_speed:.0f}")
+    ema_speed = None
+    for pt in points_mm[1:]:
+        x, y = pt[0], pt[1]
+        p = pt[2] if len(pt) >= 3 else 2048
+        raw_speed = _pressure_to_speed(p, mv.draw_speed)
+        # Exponential moving average (alpha=0.3) to smooth speed transitions
+        if ema_speed is None:
+            ema_speed = raw_speed
+        else:
+            ema_speed = 0.3 * raw_speed + 0.7 * ema_speed
+        lines.append(f"G1 X{x:.3f} Y{y:.3f} F{ema_speed:.0f}")
     lines.append(f"G1 Z{ht.pen_up_z:.3f} F3000")
     return lines
 
@@ -252,6 +278,41 @@ def _broadcast_progress(completed, total, info):
 def _broadcast_ink(points):
     """Broadcast ink stroke data to all connected WebSocket clients."""
     msg = json.dumps({"type": "ink", "points": points})
+    with _stores_lock:
+        clients = ws_clients[:]
+    for ws in clients:
+        try:
+            ws.send(msg)
+        except Exception:
+            with _stores_lock:
+                try:
+                    ws_clients.remove(ws)
+                except ValueError:
+                    pass
+
+
+def _broadcast_event(event_type, payload=None):
+    """Broadcast a typed event to all connected WebSocket clients."""
+    data = {"type": "ink_event", "event": event_type}
+    if payload:
+        data.update(payload)
+    msg = json.dumps(data)
+    with _stores_lock:
+        clients = ws_clients[:]
+    for ws in clients:
+        try:
+            ws.send(msg)
+        except Exception:
+            with _stores_lock:
+                try:
+                    ws_clients.remove(ws)
+                except ValueError:
+                    pass
+
+
+def _broadcast_stroke_complete(points_mm):
+    """Broadcast completed stroke points to browser for canvas overlay."""
+    msg = json.dumps({"type": "ink_stroke_complete", "points": points_mm})
     with _stores_lock:
         clients = ws_clients[:]
     for ws in clients:
@@ -1177,6 +1238,32 @@ def ink_stream():
     stroke_end = data.get("stroke_end", False)
     if not points and not stroke_end:
         return jsonify({"status": "ok"})
+
+    # Jog mode: redirect strokes to jog endpoint logic
+    if _jog_mode_active and points and serial.is_connected:
+        page = config.load_page_size()
+        pw, ph = page["width"], page["height"]
+        pt = points[-1]
+        if len(pt) >= 2:
+            mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
+            pressure = pt[2] if len(pt) >= 3 else 2048
+            speed = _pressure_to_speed(pressure, 1500)
+            try:
+                profile = config.load_profile(_jog_tool)
+                cal = config.load_calibration()
+                pen_off_x = cal.get("offset_x", 0)
+                pen_off_y = cal.get("offset_y", 0)
+                hx = mx - pen_off_x
+                hy = my - pen_off_y
+                if _jog_pen_down:
+                    serial.send_command(f"G1 X{hx:.3f} Y{hy:.3f} Z{profile.height.pen_down_z:.3f} F{speed:.0f}")
+                else:
+                    serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} Z{config.SAFE_Z} F{profile.movement.travel_speed:.0f}")
+                _broadcast_event("jog", {"x": mx, "y": my, "pen_down": _jog_pen_down})
+            except Exception:
+                pass
+        return jsonify({"status": "ok"})
+
     if points:
         with _live_lock:
             _ink_strokes.append(points)
@@ -1191,7 +1278,8 @@ def ink_stream():
                 for pt in points:
                     if len(pt) >= 2:
                         mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
-                        _live_stroke_points.append((mx, my))
+                        pressure = pt[2] if len(pt) >= 3 else 2048
+                        _live_stroke_points.append((mx, my, pressure))
 
     # Stroke complete: generate G-code and queue for plotter
     with _live_lock:
@@ -1200,6 +1288,8 @@ def ink_stream():
             if gcode_lines:
                 serial.queue_stroke(gcode_lines)
                 print(f"  LIVE PLOT: queued stroke ({len(gcode_lines)} lines)", flush=True)
+            # Broadcast completed stroke for canvas overlay
+            _broadcast_stroke_complete(_live_stroke_points)
             _live_stroke_points = []
 
     return jsonify({"status": "ok"})
@@ -1248,6 +1338,104 @@ def ink_live_stop():
     except Exception:
         pass
     return jsonify({"ok": True, "message": "Live plot stopped"})
+
+
+@app.route("/stream/event", methods=["POST"])
+def ink_event():
+    """Handle events from capture.py (button presses, etc.)."""
+    global _jog_pen_down
+    data = request.json or {}
+    event_type = data.get("type")
+    if event_type == "button":
+        if _jog_mode_active:
+            # In jog mode, button toggles pen up/down
+            _jog_pen_down = not _jog_pen_down
+            state_str = "down" if _jog_pen_down else "up"
+            print(f"  JOG BUTTON → pen {state_str}", flush=True)
+            _broadcast_event("jog", {"pen_toggle": True, "pen_down": _jog_pen_down})
+        elif _live_plot_active:
+            # In live plot mode, button toggles pause/resume
+            if serial.is_paused:
+                serial.resume()
+                _broadcast_event("button", {"action": "resume"})
+                print("  SLATE BUTTON → resume", flush=True)
+            else:
+                serial.pause()
+                _broadcast_event("button", {"action": "pause"})
+                print("  SLATE BUTTON → pause", flush=True)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/ink/jog-start", methods=["POST"])
+def ink_jog_start():
+    """Enter jog mode: Slate taps move plotter instead of drawing."""
+    global _jog_mode_active, _jog_tool, _jog_pen_down
+    if not serial.is_connected:
+        return jsonify({"error": "Plotter not connected"}), 400
+    data = request.json or {}
+    _jog_tool = data.get("tool", "pencil")
+    _jog_pen_down = False
+    _jog_mode_active = True
+    print(f"  JOG MODE: started (tool={_jog_tool})", flush=True)
+    return jsonify({"ok": True, "message": "Jog mode started"})
+
+
+@app.route("/api/ink/jog-stop", methods=["POST"])
+def ink_jog_stop():
+    """Exit jog mode."""
+    global _jog_mode_active
+    _jog_mode_active = False
+    print("  JOG MODE: stopped", flush=True)
+    return jsonify({"ok": True, "message": "Jog mode stopped"})
+
+
+@app.route("/api/ink/jog", methods=["POST"])
+def ink_jog():
+    """Move plotter to Slate-tapped position. Button toggles pen up/down."""
+    global _jog_pen_down
+    data = request.json or {}
+    points = data.get("points", [])
+    if not _jog_mode_active or not serial.is_connected:
+        return jsonify({"status": "ok"})
+
+    # Button toggle: pen up/down
+    if data.get("type") == "button":
+        _jog_pen_down = not _jog_pen_down
+        state_str = "down" if _jog_pen_down else "up"
+        print(f"  JOG: pen {state_str}", flush=True)
+        return jsonify({"status": "ok", "pen_down": _jog_pen_down})
+
+    # Move to tapped position
+    if not points:
+        return jsonify({"status": "ok"})
+    pt = points[-1]  # use last point in batch
+    if len(pt) < 2:
+        return jsonify({"status": "ok"})
+
+    page = config.load_page_size()
+    pw, ph = page["width"], page["height"]
+    mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
+    pressure = pt[2] if len(pt) >= 3 else 2048
+    speed = _pressure_to_speed(pressure, 1500)
+
+    try:
+        profile = config.load_profile(_jog_tool)
+    except FileNotFoundError:
+        return jsonify({"error": f"Profile '{_jog_tool}' not found"}), 404
+
+    cal = config.load_calibration()
+    pen_off_x = cal.get("offset_x", 0)
+    pen_off_y = cal.get("offset_y", 0)
+    hx = mx - pen_off_x
+    hy = my - pen_off_y
+
+    if _jog_pen_down:
+        serial.send_command(f"G1 X{hx:.3f} Y{hy:.3f} Z{profile.height.pen_down_z:.3f} F{speed:.0f}")
+    else:
+        serial.send_command(f"G0 X{hx:.3f} Y{hy:.3f} Z{config.SAFE_Z} F{profile.movement.travel_speed:.0f}")
+
+    _broadcast_event("jog", {"x": mx, "y": my, "pen_down": _jog_pen_down})
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/ink/capture", methods=["POST"])

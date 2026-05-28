@@ -1,6 +1,7 @@
 /* websocket.js — WebSocket connection with auto-reconnect */
 
 import { getState, setState } from './state.js';
+import { toast } from './lib/toast.js';
 
 let ws = null;
 let reconnectTimer = null;
@@ -54,9 +55,39 @@ function handleWSMessage(data) {
             if (data.busy !== undefined) setState({ busy: data.busy });
             if (data.position) setState({ position: data.position });
             break;
-        case 'ink_stroke':
-            // Live stroke from Slate capture
-            setState({ inkLiveStroke: data });
+        case 'ink':
+            // Live stroke from Slate capture — accumulate into current stroke
+            setState({ liveCurrentStroke: data.points || [] });
+            break;
+        case 'ink_stroke_complete':
+            // Stroke finished — move to permanent layer
+            {
+                const s = getState();
+                const finished = s.liveCurrentStroke || [];
+                if (finished.length > 0) {
+                    setState({
+                        liveStrokes: [...s.liveStrokes, finished],
+                        liveCurrentStroke: null,
+                    });
+                }
+            }
+            break;
+        case 'ink_event':
+            // Button/pause events from Slate
+            if (data.event === 'button') {
+                if (data.action === 'pause') {
+                    toast('Plotter paused (Slate button)', 'info');
+                } else if (data.action === 'resume') {
+                    toast('Plotter resumed (Slate button)', 'info');
+                }
+            } else if (data.event === 'jog') {
+                // Jog mode pen state update
+                const penEl = document.getElementById('jog-pen-state');
+                if (data.pen_toggle && penEl) {
+                    penEl.textContent = `Pen: ${data.pen_down ? 'DOWN' : 'UP'}`;
+                    penEl.style.color = data.pen_down ? '#ff6b6b' : '#00dcdc';
+                }
+            }
             break;
         case 'log':
             // Append to log

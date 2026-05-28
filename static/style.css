@@ -1159,6 +1159,23 @@ body {
     50% { opacity: 0.7; }
 }
 
+.btn-jog {
+    background: transparent;
+    color: #00dcdc;
+    border-color: #00dcdc;
+}
+
+.btn-jog:hover {
+    background: rgba(0, 220, 220, 0.1);
+}
+
+.btn-jog.active {
+    background: #009999;
+    color: white;
+    border-color: #009999;
+    animation: live-pulse 1.5s ease infinite;
+}
+
 /* ─── Utilities ─── */
 .hidden { display: none !important; }
 
