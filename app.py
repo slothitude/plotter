@@ -132,6 +132,26 @@ _jog_mode_active = False
 _jog_pen_down = False
 _jog_tool = "pencil"
 
+# Proximity calibration state (hover-align page offset)
+_prox_cal_lock = threading.Lock()
+_prox_cal_active = False
+_prox_cal_step = 0         # 0=idle, 1-3=collecting reference points
+_prox_cal_ref_points = []  # list of {hotend_x, hotend_y, wacom_x, wacom_y}
+_prox_hover_buffer = []    # accumulated hover samples [(wacom_x, wacom_y, bed_x, bed_y), ...]
+_last_hover_pos = None     # latest hover position [bed_x, bed_y, wacom_x, wacom_y]
+_last_stroke_pos = None    # latest stroke position (pen down with pressure)
+_capture_status = {
+    "connected": False,
+    "live_mode": False,
+    "pen_down": False,
+    "last_heartbeat": 0,
+}
+_PROX_REF_POSITIONS = [
+    {"hx": 60,  "hy": 60,  "label": "Front-Left"},
+    {"hx": 190, "hy": 60,  "label": "Front-Right"},
+    {"hx": 60,  "hy": 190, "label": "Back-Left"},
+]
+
 
 def _wacom_to_bed(wacom_x, wacom_y, page_w, page_h):
     """Map Wacom Slate A5 portrait coords to plotter bed mm.
@@ -415,13 +435,19 @@ def send_command():
     if "\n" in command or "\r" in command:
         return jsonify({"error": "Multi-line commands not allowed"}), 400
     # Only allow safe movement/control commands
-    allowed_prefixes = ("G0", "G1", "G4", "G28", "G90", "G91", "M84", "M112")
+    allowed_prefixes = ("G0", "G1", "G4", "G28", "G90", "G91", "M84", "M112", "M114", "M400")
     cmd_upper = command.upper().split(";")[0].strip()
     if not any(cmd_upper.startswith(p) for p in allowed_prefixes):
         return jsonify({"error": f"Command not allowed: {command.split()[0]}"}), 400
     try:
         serial.send_command(command)
-        return jsonify({"ok": True, "command": command})
+        position = {}
+        if data.get("wait"):
+            time.sleep(0.3)
+            serial.send_command("M400")
+            time.sleep(0.3)
+            position = serial.get_position()
+        return jsonify({"ok": True, "command": command, "position": position})
     except Exception as e:
         return jsonify({"error": _safe_error(e, "Operation")}), 500
 
@@ -1265,8 +1291,17 @@ def ink_stream():
         return jsonify({"status": "ok"})
 
     if points:
+        global _last_stroke_pos
         with _live_lock:
             _ink_strokes.append(points)
+        # Store last stroke point (raw wacom + pressure)
+        last_pt = points[-1]
+        if len(last_pt) >= 2:
+            page = config.load_page_size()
+            pw, ph = page["width"], page["height"]
+            mx, my = _wacom_to_bed(last_pt[0], last_pt[1], pw, ph)
+            p = last_pt[2] if len(last_pt) >= 3 else 0
+            _last_stroke_pos = [mx, my, p, last_pt[0], last_pt[1]]
         print(f"  INK: {len(points)} pts, ws_clients={len(ws_clients)}", flush=True)
         _broadcast_ink(points)
 
@@ -1347,7 +1382,10 @@ def ink_event():
     data = request.json or {}
     event_type = data.get("type")
     if event_type == "button":
-        if _jog_mode_active:
+        if _prox_cal_active:
+            # During proximity calibration, button = capture current hover reading
+            return _prox_cal_capture_point()
+        elif _jog_mode_active:
             # In jog mode, button toggles pen up/down
             _jog_pen_down = not _jog_pen_down
             state_str = "down" if _jog_pen_down else "up"
@@ -1364,6 +1402,290 @@ def ink_event():
                 _broadcast_event("button", {"action": "pause"})
                 print("  SLATE BUTTON → pause", flush=True)
     return jsonify({"status": "ok"})
+
+
+@app.route("/stream/hover", methods=["POST"])
+def ink_hover():
+    """Receive hover (p=0) points from capture.py for calibration."""
+    data = request.json or {}
+    points = data.get("points", [])
+    if not points:
+        return jsonify({"status": "ok"})
+
+    page = config.load_page_size()
+    pw, ph = page["width"], page["height"]
+    bed_points = []
+    for pt in points:
+        if len(pt) >= 2:
+            mx, my = _wacom_to_bed(pt[0], pt[1], pw, ph)
+            bed_points.append((mx, my))
+
+    # Broadcast for UI visualization (last point only)
+    if bed_points:
+        global _last_hover_pos
+        last_raw = points[-1] if points else None
+        _last_hover_pos = [bed_points[-1][0], bed_points[-1][1], last_raw[0] if last_raw else 0, last_raw[1] if last_raw else 0]
+        _broadcast_event("hover", {"points": bed_points[-1]})
+
+    # Accumulate for calibration if active
+    with _prox_cal_lock:
+        if _prox_cal_active:
+            for i, pt in enumerate(points):
+                if len(pt) >= 2 and i < len(bed_points):
+                    _prox_hover_buffer.append((pt[0], pt[1], bed_points[i][0], bed_points[i][1]))
+            # Keep only last 200 samples
+            if len(_prox_hover_buffer) > 200:
+                _prox_hover_buffer[:] = _prox_hover_buffer[-200:]
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/stream/heartbeat", methods=["POST"])
+def ink_heartbeat():
+    """Receive heartbeat from capture.py — indicates it's alive and in live mode."""
+    global _capture_status
+    data = request.json or {}
+    _capture_status = {
+        "connected": True,
+        "live_mode": data.get("live", False),
+        "pen_down": data.get("pen_down", False),
+        "last_heartbeat": time.time(),
+    }
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/hover/position", methods=["GET"])
+def get_hover_position():
+    """Get the latest hover and stroke positions from the Slate."""
+    hover = list(_last_hover_pos) if _last_hover_pos else None
+    stroke = list(_last_stroke_pos) if _last_stroke_pos else None
+    # Include capture status with 15s staleness check
+    now = time.time()
+    cs = dict(_capture_status)
+    if now - cs["last_heartbeat"] > 15:
+        cs["connected"] = False
+        cs["live_mode"] = False
+        cs["pen_down"] = False
+    return jsonify({"hover": hover, "stroke": stroke, "capture": cs})
+
+
+# ── Proximity Calibration (Hover-Align) ─────────────────────────────
+
+def _prox_cal_capture_point():
+    """Capture current hover reading as calibration reference point."""
+    with _prox_cal_lock:
+        if not _prox_cal_active:
+            return jsonify({"error": "Calibration not active"}), 400
+        if len(_prox_hover_buffer) < 5:
+            return jsonify({"error": "Not enough hover samples — keep pen near tip"}), 400
+
+        # Average the last N samples, discarding outliers
+        samples = _prox_hover_buffer[-50:]
+        wx_vals = [s[0] for s in samples]
+        wy_vals = [s[1] for s in samples]
+        # Median filter: keep samples within 1 std dev of median
+        import statistics
+        wx_med = statistics.median(wx_vals)
+        wy_med = statistics.median(wy_vals)
+        wx_std = statistics.stdev(wx_vals) if len(wx_vals) > 1 else 100
+        wy_std = statistics.stdev(wy_vals) if len(wy_vals) > 1 else 100
+        filtered_wx = [x for x in wx_vals if abs(x - wx_med) < max(wx_std, 200)]
+        filtered_wy = [y for y in wy_vals if abs(y - wy_med) < max(wy_std, 200)]
+        if not filtered_wx or not filtered_wy:
+            return jsonify({"error": "Hover data too noisy — hold steady"}), 400
+
+        avg_wx = sum(filtered_wx) / len(filtered_wx)
+        avg_wy = sum(filtered_wy) / len(filtered_wy)
+
+        ref = _PROX_REF_POSITIONS[_prox_cal_step - 1]
+        _prox_cal_ref_points.append({
+            "hotend_x": ref["hx"],
+            "hotend_y": ref["hy"],
+            "wacom_x": avg_wx,
+            "wacom_y": avg_wy,
+        })
+
+        captured = _prox_cal_step
+        total_refs = len(_prox_cal_ref_points)
+        print(f"  PROX CAL: Point {captured}/3 captured (wacom {avg_wx:.0f},{avg_wy:.0f})", flush=True)
+        _prox_hover_buffer.clear()
+
+        _broadcast_event("calibration", {
+            "action": "captured",
+            "step": captured,
+            "total": 3,
+        })
+
+    # If all 3 points captured, auto-finish
+    if total_refs >= 3:
+        return _prox_cal_finish()
+
+    return jsonify({"ok": True, "step": captured, "total": 3, "message": f"Point {captured}/3 captured"})
+
+
+def _prox_cal_finish():
+    """Compute page offset from 3 captured reference points and save."""
+    global _prox_cal_active, _prox_cal_step, _prox_cal_ref_points
+    cal = config.load_calibration()
+    pen_off_x = cal.get("offset_x", 0)
+    pen_off_y = cal.get("offset_y", 0)
+    page = config.load_page_size()
+    pw, ph = page["width"], page["height"]
+
+    offsets = []
+    for rp in _prox_cal_ref_points:
+        # Where the pen is (in bed coords)
+        pen_bed_x = rp["hotend_x"] + pen_off_x
+        pen_bed_y = rp["hotend_y"] + pen_off_y
+        # Where the Wacom thinks the pen is (in bed coords via current page mapping)
+        wacom_bed_x = (1 - rp["wacom_y"] / 14700) * pw
+        wacom_bed_y = (rp["wacom_x"] / 21600) * ph
+        # Offset = actual pen position - wacom-mapped position
+        offsets.append((pen_bed_x - wacom_bed_x, pen_bed_y - wacom_bed_y))
+
+    avg_ox = sum(o[0] for o in offsets) / len(offsets)
+    avg_oy = sum(o[1] for o in offsets) / len(offsets)
+
+    # Compute residuals (consistency check)
+    residuals = [(o[0] - avg_ox, o[1] - avg_oy) for o in offsets]
+    max_residual = max(math.sqrt(r[0]**2 + r[1]**2) for r in residuals)
+
+    # Save computed page offset to page_size.json
+    page_path = Path(__file__).parent / "page_size.json"
+    page_data = {"width": pw, "height": ph, "preset": page.get("preset", "A5"),
+                 "offset_x": round(avg_ox, 1), "offset_y": round(avg_oy, 1)}
+    page_data.update({k: v for k, v in page.items() if k not in page_data})
+    page_data["offset_x"] = round(avg_ox, 1)
+    page_data["offset_y"] = round(avg_oy, 1)
+    with open(page_path, "w") as f:
+        json.dump(page_data, f, indent=2)
+
+    # Park plotter
+    try:
+        serial.send_command(f"G0 Z{config.SAFE_Z} F3000")
+        serial.send_command("G0 X0 Y0 F3000")
+    except Exception:
+        pass
+
+    print(f"  PROX CAL: DONE offset=({avg_ox:.1f}, {avg_oy:.1f}) max_residual={max_residual:.1f}mm", flush=True)
+
+    _prox_cal_active = False
+    _prox_cal_step = 0
+    _prox_cal_ref_points = []
+    _prox_hover_buffer.clear()
+
+    _broadcast_event("calibration", {
+        "action": "finished",
+        "offset_x": round(avg_ox, 1),
+        "offset_y": round(avg_oy, 1),
+        "residuals": [round(math.sqrt(r[0]**2 + r[1]**2), 1) for r in residuals],
+        "max_residual": round(max_residual, 1),
+    })
+
+    return jsonify({
+        "ok": True,
+        "offset_x": round(avg_ox, 1),
+        "offset_y": round(avg_oy, 1),
+        "max_residual": round(max_residual, 1),
+        "residuals": [round(math.sqrt(r[0]**2 + r[1]**2), 1) for r in residuals],
+    })
+
+
+@app.route("/api/proximity-calibration/start", methods=["POST"])
+def prox_cal_start():
+    """Start hover-align calibration: homes plotter, enters calibration mode."""
+    global _prox_cal_active, _prox_cal_step, _prox_cal_ref_points, _prox_hover_buffer
+    if not serial.is_connected:
+        return jsonify({"error": "Plotter not connected"}), 400
+    if _prox_cal_active:
+        return jsonify({"error": "Calibration already active"}), 400
+
+    # Home and raise to safe Z
+    _raise_to_safe()
+
+    _prox_cal_active = True
+    _prox_cal_step = 0
+    _prox_cal_ref_points = []
+    _prox_hover_buffer.clear()
+
+    print("  PROX CAL: started, plotter homed", flush=True)
+    _broadcast_event("calibration", {"action": "started"})
+    return jsonify({"ok": True, "message": "Calibration started — press Next Point"})
+
+
+@app.route("/api/proximity-calibration/next-point", methods=["POST"])
+def prox_cal_next_point():
+    """Move plotter to next reference position and wait for hover alignment."""
+    global _prox_cal_step, _prox_hover_buffer
+    with _prox_cal_lock:
+        if not _prox_cal_active:
+            return jsonify({"error": "Calibration not active"}), 400
+        if _prox_cal_step >= 3:
+            return jsonify({"error": "All points already positioned"}), 400
+
+        _prox_cal_step += 1
+        ref = _PROX_REF_POSITIONS[_prox_cal_step - 1]
+        _prox_hover_buffer.clear()
+
+    # Move plotter to reference position
+    try:
+        serial.send_command("G90")
+        serial.send_command(f"G0 X{ref['hx']:.1f} Y{ref['hy']:.1f} Z{config.SAFE_Z} F3000")
+    except Exception as e:
+        return jsonify({"error": _safe_error(e, "Move failed")}), 500
+
+    print(f"  PROX CAL: moved to point {_prox_cal_step}/3 ({ref['label']})", flush=True)
+    _broadcast_event("calibration", {
+        "action": "move",
+        "step": _prox_cal_step,
+        "total": 3,
+        "hotend_x": ref["hx"],
+        "hotend_y": ref["hy"],
+        "label": ref["label"],
+    })
+
+    return jsonify({
+        "ok": True,
+        "step": _prox_cal_step,
+        "total": 3,
+        "hotend_x": ref["hx"],
+        "hotend_y": ref["hy"],
+        "label": ref["label"],
+    })
+
+
+@app.route("/api/proximity-calibration/capture", methods=["POST"])
+def prox_cal_capture():
+    """Capture current hover reading as calibration reference point (UI trigger)."""
+    return _prox_cal_capture_point()
+
+
+@app.route("/api/proximity-calibration/finish", methods=["POST"])
+def prox_cal_finish_endpoint():
+    """Finish calibration early (normally auto-finished after 3 points)."""
+    if not _prox_cal_active:
+        return jsonify({"error": "Calibration not active"}), 400
+    if len(_prox_cal_ref_points) < 3:
+        return jsonify({"error": f"Need 3 points, have {len(_prox_cal_ref_points)}"}), 400
+    return _prox_cal_finish()
+
+
+@app.route("/api/proximity-calibration/cancel", methods=["POST"])
+def prox_cal_cancel():
+    """Cancel calibration and park plotter."""
+    global _prox_cal_active, _prox_cal_step, _prox_cal_ref_points
+    _prox_cal_active = False
+    _prox_cal_step = 0
+    _prox_cal_ref_points = []
+    _prox_hover_buffer.clear()
+    try:
+        serial.send_command(f"G0 Z{config.SAFE_Z} F3000")
+        serial.send_command("G0 X0 Y0 F3000")
+    except Exception:
+        pass
+    print("  PROX CAL: cancelled", flush=True)
+    _broadcast_event("calibration", {"action": "cancelled"})
+    return jsonify({"ok": True, "message": "Calibration cancelled"})
 
 
 @app.route("/api/ink/jog-start", methods=["POST"])
@@ -1514,7 +1836,14 @@ def ink_status():
     """Return current capture status."""
     capturing = _slate_process is not None and _slate_process.poll() is None
     pid = _slate_process.pid if _slate_process else None
-    return jsonify({"capturing": capturing, "pid": pid})
+    # Include heartbeat-based capture status
+    now = time.time()
+    cs = dict(_capture_status)
+    if now - cs["last_heartbeat"] > 15:
+        cs["connected"] = False
+        cs["live_mode"] = False
+        cs["pen_down"] = False
+    return jsonify({"capturing": capturing, "pid": pid, "capture": cs})
 
 
 @app.route("/api/ink/sync", methods=["POST"])
