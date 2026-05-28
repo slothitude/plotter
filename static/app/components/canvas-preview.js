@@ -10,7 +10,8 @@ export function initCanvasPreview() {
             changed.showDraw !== undefined || changed.showTravel !== undefined ||
             changed.showGrid !== undefined || changed.pageWidth !== undefined ||
             changed.pageHeight !== undefined ||
-            changed.liveStrokes !== undefined || changed.liveCurrentStroke !== undefined) {
+            changed.liveStrokes !== undefined || changed.liveCurrentStroke !== undefined ||
+            changed.hoverPosition !== undefined || changed.proxCalTarget !== undefined) {
             redrawAll(state);
         }
     });
@@ -72,6 +73,40 @@ export function drawCanvas(canvasId, state) {
     // Live strokes from Slate
     if (s.liveStrokes?.length || s.liveCurrentStroke) {
         drawLiveStrokes(ctx, ox, oy, scale, s.liveStrokes || [], s.liveCurrentStroke);
+    }
+
+    // Proximity calibration: target crosshair
+    if (s.proxCalActive && s.proxCalTarget) {
+        const tx = ox + s.proxCalTarget.hotend_x * scale;
+        const ty = oy + s.proxCalTarget.hotend_y * scale;
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(tx - 10, ty); ctx.lineTo(tx + 10, ty);
+        ctx.moveTo(tx, ty - 10); ctx.lineTo(tx, ty + 10);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Label
+        ctx.fillStyle = '#ff4444';
+        ctx.font = '9px monospace';
+        ctx.fillText(`Point ${s.proxCalStep}/3`, tx + 12, ty - 4);
+    }
+
+    // Hover dot (pen position detected by Slate)
+    if (s.hoverPosition) {
+        const hx = ox + s.hoverPosition[0] * scale;
+        const hy = oy + s.hoverPosition[1] * scale;
+        ctx.fillStyle = '#00ff88';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+        ctx.fill();
+        // Glow effect
+        ctx.strokeStyle = '#00ff8866';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(hx, hy, 7, 0, Math.PI * 2);
+        ctx.stroke();
     }
 }
 

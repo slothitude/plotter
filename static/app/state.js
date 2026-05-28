@@ -60,6 +60,12 @@ const state = {
     liveCurrentStroke: null,  // in-progress stroke being drawn
     jogMode: false,           // Slate as jog controller mode
 
+    // Hover-Align calibration
+    hoverPosition: null,      // current hover dot [bed_x, bed_y]
+    proxCalActive: false,     // calibration in progress
+    proxCalStep: 0,           // 0=idle, 1-3=collecting points
+    proxCalTarget: null,      // current target {hotend_x, hotend_y}
+
     // Jog
     jogStep: 10,
 

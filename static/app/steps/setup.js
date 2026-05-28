@@ -15,6 +15,7 @@ export function initSetup() {
     initCalibration();
     initBedLevel();
     initMarkPage();
+    initHoverCalibration();
     initContinueButton();
 
     subscribe('setup', (changed) => {
@@ -276,6 +277,97 @@ function initMarkPage() {
         apiPost('/api/mark-page', { tool: getState().tool }).then(data => {
             if (data.error) return toast(data.error, 'error');
             toast('Page outline marked \u2014 check corners', 'success');
+        });
+    });
+}
+
+// ── Hover-Align Page Calibration ──
+function initHoverCalibration() {
+    const btnStart = document.getElementById('btn-hover-cal-start');
+    const btnNext = document.getElementById('btn-hover-cal-next');
+    const btnCapture = document.getElementById('btn-hover-cal-capture');
+    const btnCancel = document.getElementById('btn-hover-cal-cancel');
+    const statusEl = document.getElementById('hover-cal-status');
+
+    function showStart() {
+        btnStart?.classList.remove('hidden');
+        btnNext?.classList.add('hidden');
+        btnCapture?.classList.add('hidden');
+        btnCancel?.classList.add('hidden');
+        if (statusEl) statusEl.textContent = 'Place Slate on bed, connect plotter, start capture';
+    }
+
+    function showCalibrating(step, label) {
+        btnStart?.classList.add('hidden');
+        btnNext?.classList.add('hidden');
+        btnCapture?.classList.remove('hidden');
+        btnCancel?.classList.remove('hidden');
+        if (statusEl) statusEl.textContent = `Point ${step}/3: ${label} \u2014 hover pen under plotter tip, press Capture or Slate button`;
+    }
+
+    function showWaitingForNext(step) {
+        btnStart?.classList.add('hidden');
+        btnNext?.classList.remove('hidden');
+        btnCapture?.classList.add('hidden');
+        btnCancel?.classList.remove('hidden');
+        if (statusEl) statusEl.textContent = `Point ${step}/3 captured \u2014 press Next Point`;
+    }
+
+    // Listen for calibration state changes
+    subscribe('hoverCal', (changed) => {
+        const s = getState();
+        if (!s.proxCalActive) {
+            showStart();
+            return;
+        }
+        if (s.proxCalStep > 0 && s.proxCalTarget) {
+            showCalibrating(s.proxCalStep, s.proxCalTarget.label || '');
+        }
+    });
+
+    btnStart?.addEventListener('click', () => {
+        if (!getState().connected) return toast('Connect plotter first', 'warn');
+        if (!getState().capturing) return toast('Start capture first (need Slate hover data)', 'warn');
+        apiPost('/api/proximity-calibration/start').then(data => {
+            if (data.error) return toast(data.error, 'error');
+            toast('Plotter homing \u2014 wait ~15s then press Next Point', 'success');
+            btnStart?.classList.add('hidden');
+            btnNext?.classList.remove('hidden');
+            btnCancel?.classList.remove('hidden');
+            if (statusEl) statusEl.textContent = 'Homing plotter... press Next Point when ready';
+        });
+    });
+
+    btnNext?.addEventListener('click', () => {
+        apiPost('/api/proximity-calibration/next-point').then(data => {
+            if (data.error) return toast(data.error, 'error');
+            setState({
+                proxCalActive: true,
+                proxCalStep: data.step,
+                proxCalTarget: { hotend_x: data.hotend_x, hotend_y: data.hotend_y, label: data.label },
+            });
+            showCalibrating(data.step, data.label);
+            toast(`Moved to ${data.label} \u2014 align and capture`, 'info');
+        });
+    });
+
+    btnCapture?.addEventListener('click', () => {
+        apiPost('/api/proximity-calibration/capture').then(data => {
+            if (data.error) return toast(data.error, 'error');
+            if (data.ok && data.total >= 3 && !data.offset_x) {
+                // Auto-finished
+                return;
+            }
+            if (data.step < 3) {
+                showWaitingForNext(data.step);
+            }
+        });
+    });
+
+    btnCancel?.addEventListener('click', () => {
+        apiPost('/api/proximity-calibration/cancel').then(() => {
+            showStart();
+            toast('Calibration cancelled', 'info');
         });
     });
 }

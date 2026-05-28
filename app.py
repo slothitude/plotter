@@ -139,6 +139,7 @@ _prox_cal_step = 0         # 0=idle, 1-3=collecting reference points
 _prox_cal_ref_points = []  # list of {hotend_x, hotend_y, wacom_x, wacom_y}
 _prox_hover_buffer = []    # accumulated hover samples [(wacom_x, wacom_y, bed_x, bed_y), ...]
 _last_hover_pos = None     # latest hover position [bed_x, bed_y, wacom_x, wacom_y]
+_last_hover_time = 0       # timestamp of last hover update
 _last_stroke_pos = None    # latest stroke position (pen down with pressure)
 _capture_status = {
     "connected": False,
@@ -1422,9 +1423,10 @@ def ink_hover():
 
     # Broadcast for UI visualization (last point only)
     if bed_points:
-        global _last_hover_pos
+        global _last_hover_pos, _last_hover_time
         last_raw = points[-1] if points else None
         _last_hover_pos = [bed_points[-1][0], bed_points[-1][1], last_raw[0] if last_raw else 0, last_raw[1] if last_raw else 0]
+        _last_hover_time = time.time()
         _broadcast_event("hover", {"points": bed_points[-1]})
 
     # Accumulate for calibration if active
@@ -1466,7 +1468,7 @@ def get_hover_position():
         cs["connected"] = False
         cs["live_mode"] = False
         cs["pen_down"] = False
-    return jsonify({"hover": hover, "stroke": stroke, "capture": cs})
+    return jsonify({"hover": hover, "hover_time": _last_hover_time, "stroke": stroke, "capture": cs})
 
 
 # ── Proximity Calibration (Hover-Align) ─────────────────────────────

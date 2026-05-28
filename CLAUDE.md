@@ -24,6 +24,8 @@ Single-page app controlling a pen plotter (Marlin-compatible 3D printer) through
 | `gcode.py` | SVG pipeline — parse → flatten curves → simplify (RDP) → fill → transform → optimize → G-code |
 | `config.py` | Dataclass models for tool profiles, TOML loader, calibration/page persistence (JSON) |
 | `font.py` | Hershey single-stroke vector font + Script Simplex cursive for text patterns |
+| `manga.py` | Manga panel generators — panels, speed lines, tone fills, speech bubbles, SFX, effects |
+| `plotter_mcp.py` | FastMCP stdio server — exposes plotter API as MCP tools for Claude Code |
 
 ### Frontend (static/)
 
@@ -106,6 +108,10 @@ When enabled: Pass 1 draws with pencil (guide layer), M0 pause for tool swap, Pa
 
 `POST /api/ink/ocr` — SVG → PNG (OpenCV auto-crop) → region detection (text vs drawing) → vision LLM chain (NVIDIA NIM → ZhipuAI → Ollama).
 
+### Manga Pipeline
+
+`manga.py` + `static/app/creators/manga-tools.js`. Dispatched via `POST /api/manga/generate` with an `action` field. Generates `Polyline` objects (with `.layer` str for speed-based layering) stored directly in `text_polylines` — no SVG round-trip. `uploaded_svgs[svg_id]` is set to `None` for manga content; the convert endpoint skips SVG parsing when the value is `None`.
+
 ## Key Gotchas
 
 - Flask **must run with `debug=False, use_reloader=False`** — the watchdog reloader fork locks the COM port (PermissionError on reconnect)
@@ -118,3 +124,5 @@ When enabled: Pass 1 draws with pencil (guide layer), M0 pause for tool swap, Pa
 - `calibration.json` OVERRIDES TOML profile values — always edit calibration.json for offset/Z changes
 - `output/` directory is cleaned of files older than 7 days on startup — don't store persistent files there
 - Cursive Y coordinates can be negative (descenders) up to ~20 (ascenders) — wider range than standard Hershey
+- Manga content sets `uploaded_svgs[svg_id] = None` — convert endpoint must check `is not None` before treating it as an SVG path
+- `calibration_confirmed=True` is required on print/convert/live-start calls via the MCP server — this is a safety gate, not optional

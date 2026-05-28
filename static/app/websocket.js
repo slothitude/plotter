@@ -73,12 +73,35 @@ function handleWSMessage(data) {
             }
             break;
         case 'ink_event':
-            // Button/pause events from Slate
+            // Button/pause/hover/calibration events from Slate
             if (data.event === 'button') {
                 if (data.action === 'pause') {
                     toast('Plotter paused (Slate button)', 'info');
                 } else if (data.action === 'resume') {
                     toast('Plotter resumed (Slate button)', 'info');
+                }
+            } else if (data.event === 'hover') {
+                // Hover position from Slate (pen detected, not touching)
+                if (data.points) {
+                    setState({ hoverPosition: data.points });
+                }
+            } else if (data.event === 'calibration') {
+                // Proximity calibration events
+                if (data.action === 'started') {
+                    setState({ proxCalActive: true, proxCalStep: 0, proxCalTarget: null });
+                } else if (data.action === 'move') {
+                    setState({
+                        proxCalStep: data.step,
+                        proxCalTarget: { hotend_x: data.hotend_x, hotend_y: data.hotend_y },
+                    });
+                } else if (data.action === 'captured') {
+                    toast(`Point ${data.step}/3 captured`, 'success');
+                } else if (data.action === 'finished') {
+                    setState({ proxCalActive: false, proxCalStep: 0, proxCalTarget: null, hoverPosition: null });
+                    toast(`Page offset: (${data.offset_x}, ${data.offset_y})mm — max error ${data.max_residual}mm`, 'success');
+                } else if (data.action === 'cancelled') {
+                    setState({ proxCalActive: false, proxCalStep: 0, proxCalTarget: null, hoverPosition: null });
+                    toast('Calibration cancelled', 'info');
                 }
             } else if (data.event === 'jog') {
                 // Jog mode pen state update

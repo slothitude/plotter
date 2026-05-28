@@ -97,13 +97,14 @@ def plotter_stop() -> dict:
 
 
 @mcp.tool()
-def plotter_send_command(command: str) -> dict:
+def plotter_send_command(command: str, wait: bool = False) -> dict:
     """Send a raw G-code command to the plotter.
 
     Args:
         command: G-code command string (e.g. "G28", "M114")
+        wait: If True, wait for move to complete and return position
     """
-    return _api("POST", "/api/send-command", json={"command": command})
+    return _api("POST", "/api/send-command", json={"command": command, "wait": wait})
 
 
 # ── File Pipeline ───────────────────────────────────────────────────────────────
